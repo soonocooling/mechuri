@@ -10,6 +10,7 @@
 - 정보를 많이 입력할수록 포인트 보상 → 포인트로 추가 추천
 - 개인화 추천: 무료 주 1회 1곳 / 프리미엄(모의 결제) 무제한 5곳
 - 스택: Next.js(App Router, TypeScript) + Tailwind + Supabase + Vercel + 카카오 로컬 API
+- 구현 원칙: 모든 페이지·컴포넌트는 `'use client'`. Supabase 호출은 `lib/supabase.ts` 브라우저 클라이언트(로그인 세션)로만 한다. 서버 코드는 `app/api/places/search` 하나이고 DB를 건드리지 않는다 (서버에는 사용자 세션이 없어 RLS의 auth.uid()가 null → 빈 결과·insert 거부)
 
 ## 1. 화면 (3장)
 
@@ -105,6 +106,7 @@
 - 리스트 수정 = 새 ranking_lists 한 줄 + 새 ranking_items. **사용자별 가장 최근 ranking_lists가 현재 리스트**
 - 리뷰 수정 = 같은 가게에 새 reviews 한 줄. **(user, place)별 가장 최근 리뷰가 현재 리뷰**
 - 포인트는 테이블이 없다. reviews·recommendations에서 계산한다(§5)
+- 리스트·리뷰 저장은 DB 함수(§4-1) 한 번으로 한다. 부모·자식 행이 같이 들어가거나 같이 실패
 
 ## 3. 열
 
@@ -118,7 +120,7 @@
 | kakao_place_id | 글자 | 카카오 장소 id. **중복 불가** |
 | name | 글자 | |
 | address | 글자 | 도로명 우선, 없으면 지번 |
-| category | 글자 | 대분류: 한식·중식·일식·양식·아시안·분식·치킨·버거·피자·샐러드·건강식·카페·디저트·술집·기타 |
+| category | 글자 | 대분류 12종: 한식 / 중식 / 일식 / 양식 / 아시안 / 분식 / 치킨 / 버거·피자 / 샐러드·건강식 / 카페·디저트 / 술집 / 기타 (값은 이 문자열 그대로) |
 | kakao_category | 글자 | 카카오 category_name 원문 ("음식점 > 한식 > 해장국") |
 | lat | 숫자 | 위도 |
 | lng | 숫자 | 경도 |
@@ -216,6 +218,18 @@
 
 - 순위·태그 집계를 앱에서 계산하므로 리스트·리뷰는 누구나 읽기. 행에는 uuid만 있고 아이디는 없음
 - secret 키는 어디에도 쓰지 않는다
+- update 정책이 없으므로 update·delete 쿼리는 에러 없이 0행 처리된다. 코드에 쓰지 않는다
+
+### 4-1. DB 함수 (원자적 저장)
+부모 행과 자식 행을 supabase-js로 따로 insert하면 중간 실패 시 자식 없는 리스트·리뷰가 "가장 최근"이 되어 현재 리스트·리뷰가 사라진다. 그래서 두 저장은 함수 하나로 묶는다. 둘 다 `security invoker`(호출자 권한, RLS 그대로 적용).
+
+| 함수 | 인자 | 동작 | 반환 |
+|---|---|---|---|
+| save_list | p_place_ids bigint[], p_is_onboarding boolean | 개수 3~10·중복 검사 → ranking_lists 1줄 + ranking_items(배열 순서 = rank 1..n) | 새 list id |
+| submit_review | p_place_id bigint, p_tag_ids bigint[], p_source text | 태그 1개 이상·source 값 검사 → reviews 1줄 + review_tags | 새 review id |
+
+호출: `supabase.rpc('save_list', { p_place_ids, p_is_onboarding })`. 그룹별 max_select·평가형 1개 검사는 앱(ReviewSheet)에서 한다.
+places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 
 ## 5. 계산 규칙 (앱 코드에서 계산, DB 뷰 없음)
 
@@ -253,6 +267,9 @@
 
 잔액 = 적립 합 − 3 × (kind = point 인 recommendations 수). 잔액 < 3이면 포인트 추천 버튼 비활성
 
+- 미리보기: ReviewSheet가 열릴 때 `getReviewContext(placeId)`로 { isFirst, pioneer }를 한 번 받고, 칩을 누를 때마다 동기 함수 `previewPoints(tagIds, tags, ctx)`로 계산한다(칩마다 DB 조회 금지). isFirst = false면 0P
+- 온보딩 완료 화면 P = 세 ReviewSheet의 earned 합 + (세 곳 모두 earned > 0이면 3). 신규 사용자에겐 earned > 0 ⇔ 기본 충족 첫 리뷰이므로 §5-5 보너스 조건과 같다
+
 ### 5-6. 추천 (`lib/recommend.ts`)
 - 후보: 현재 리스트나 현재 리뷰에 한 번이라도 등장한 가게 − 내 현재 리스트 − (프리미엄 "다시 추천" 시) 직전 결과
 - CF: U_p = p를 현재 리스트에 넣은 사용자 집합
@@ -281,7 +298,11 @@
 - 유료 여부 판정은 이 함수 한 곳에서만
 
 ### 5-8. 카카오 → 대분류 (`lib/categorize.ts`)
-category_name을 " > "로 나눈 2번째 단어 기준
+판정 순서 (위에서 먼저 걸리는 것)
+1. category_name 어디든 "샐러드" 포함 → 샐러드·건강식
+2. 3번째 단어가 "피자" → 버거·피자 (카카오가 피자를 "양식 > 피자"로 주는 경우 대비)
+3. category_group_code = CE7 → 카페·디저트
+4. " > "로 나눈 2번째 단어로 아래 표
 | 카카오 | 대분류 |
 |---|---|
 | 한식 | 한식 |
@@ -294,7 +315,6 @@ category_name을 " > "로 나눈 2번째 단어 기준
 | 패스트푸드 | 버거·피자 |
 | 술집 | 술집 |
 | 간식, 카페(그룹 CE7) | 카페·디저트 |
-| 샐러드 포함 | 샐러드·건강식 |
 | 그 외 | 기타 |
 
 ## 6. tags 시드
@@ -311,6 +331,7 @@ category_name을 " > "로 나눈 2번째 단어 기준
 | portion | 양 | evaluative | 1 | 푸짐(+1), 보통(0), 적음(−1) |
 | wait | 대기 | evaluative | 1 | 바로 입장(+1), 조금 대기(0), 오래 대기(−1) |
 
+시드 총 72행 (cuisine 30 + taste 10 + mood 6 + situation 8 + price 3 + 평가형 5×3).
 리뷰 시트의 cuisine 칩은 가게 category와 같은 parent_label 칩만 보여준다(기타면 전부).
 
 ## 7. 인증
@@ -327,7 +348,8 @@ category_name을 " > "로 나눈 2번째 단어 기준
   헤더 `Authorization: KakaoAK {KAKAO_REST_API_KEY}`
   중심 좌표는 국제캠퍼스 대략값 — 지도에서 확인 후 수정
 - 결과 중 category_group_code가 FD6(음식점)·CE7(카페)인 것만 돌려줌
-- 선택 시: places에 kakao_place_id가 있으면 그 행 사용, 없으면 추가(동시 추가로 중복 오류가 나면 다시 조회)
+- API 라우트는 카카오 결과를 `KakaoPlace[]`(§10)로 바꿔 돌려주기만 하고 DB에 쓰지 않는다
+- 선택 시(브라우저, `lib/places.ts`의 `ensurePlace`): places에 kakao_place_id가 있으면 그 행 사용, 없으면 추가(동시 추가로 중복 오류가 나면 다시 조회). category는 `toCategory`로 계산
 
 ## 9. 환경변수
 | 이름 | 어디에 | 공개 |
@@ -342,7 +364,10 @@ category_name을 " > "로 나눈 2번째 단어 기준
 ## 10. 파일과 담당 (남의 파일은 고치지 않는다)
 | 파일 | 담당 | 내용 |
 |---|---|---|
+| CLAUDE.md | A | Claude Code 작업 규칙 (WORK_SPLIT §11) |
+| lib/types.ts | A(뼈대) | 공통 타입. 바꾸려면 plan.md §10 먼저 |
 | lib/supabase.ts | A | Supabase 클라이언트 |
+| lib/places.ts | A | ensurePlace(kakaoPlace), getPlaces(ids?) |
 | lib/auth.ts | A | signUp(id,pw), signIn(id,pw), signOut(), useUser() |
 | lib/lists.ts | A | getCurrentList(userId), getAllCurrentLists(), saveList(placeIds, isOnboarding) |
 | lib/categorize.ts | A | toCategory(categoryName, groupCode) |
@@ -354,7 +379,7 @@ category_name을 " > "로 나눈 2번째 단어 기준
 | components/PlaceSearch.tsx | A | 검색창 + 결과 + 선택 |
 | lib/tags.ts | B | getTags(), 그룹 묶기, 타입 |
 | lib/reviews.ts | B | submitReview(placeId, tagIds, source), getCurrentReviews(), getFirstReviews() |
-| lib/points.ts | B | getPointBalance(userId), previewPoints(tagIds, placeId) |
+| lib/points.ts | B | getPointBalance(userId), getReviewContext(placeId), previewPoints(tagIds, tags, ctx) |
 | lib/recommend.ts | B | recommend(userId, kind, excludeIds?) |
 | components/ReviewSheet.tsx | B | 칩 선택 시트 |
 | app/recommend/page.tsx | B | 추천 탭 |
@@ -367,39 +392,99 @@ category_name을 " > "로 나눈 2번째 단어 기준
 | app/me/page.tsx, app/premium/page.tsx | C | 마이(포인트 표시·프리미엄), 모의 결제 |
 
 ### 함수 약속 (먼저 이 모양대로 만들고 속은 나중에 채운다)
+타입은 전부 `lib/types.ts`에서 import한다. 각자 파일에 같은 타입을 다시 정의하지 않는다.
 ```ts
+// A — lib/types.ts (뼈대에서 생성)
+export type Category = '한식' | '중식' | '일식' | '양식' | '아시안' | '분식' | '치킨'
+  | '버거·피자' | '샐러드·건강식' | '카페·디저트' | '술집' | '기타';
+export type Place = { id: number; kakaoPlaceId: string; name: string; address: string;
+  category: Category; kakaoCategory: string; lat: number; lng: number };
+export type KakaoPlace = { kakaoPlaceId: string; name: string; address: string;
+  categoryName: string; groupCode: string; lat: number; lng: number };
+export type ListItem = { placeId: number; rank: number };
+export type Tag = { id: number; groupKey: string; groupLabel: string;
+  groupKind: 'descriptive' | 'evaluative'; maxSelect: number; label: string;
+  parentLabel: string | null; value: number | null; sort: number };
+export type CurrentReview = { reviewId: number; userId: string; placeId: number;
+  tagIds: number[]; createdAt: string };
+export type ReviewSource = 'onboarding' | 'review' | 'list_add';
+export type RecKind = 'free' | 'point' | 'premium';
+export type RecItem = { placeId: number; reason: string };
+
+// A — lib/auth.ts
+signUp(id: string, pw: string): Promise<void>
+signIn(id: string, pw: string): Promise<void>
+signOut(): Promise<void>
+useUser(): { user: { id: string; username: string } | null; loading: boolean }
+
+// A — lib/places.ts
+ensurePlace(k: KakaoPlace): Promise<Place>
+getPlaces(ids?: number[]): Promise<Map<number, Place>>   // ids 없으면 전체
+
+// A — lib/lists.ts
+getCurrentList(userId: string): Promise<ListItem[]>
+getAllCurrentLists(): Promise<Map<string, ListItem[]>>   // key = userId
+saveList(placeIds: number[], isOnboarding: boolean): Promise<number>  // rpc save_list
+
+// A — lib/categorize.ts
+toCategory(categoryName: string, groupCode: string): Category
+
 // B — components/ReviewSheet.tsx
 type ReviewSheetProps = {
   placeId: number;
-  placeCategory: string;
-  source: 'onboarding' | 'review' | 'list_add';
+  placeCategory: Category;
+  source: ReviewSource;
   embedded?: boolean;              // 온보딩 화면 안에 끼울 때 true
   onDone: (earned: number) => void; // 제출 또는 건너뛰기 후 호출(건너뛰기면 0)
 };
 
-// A — lib/lists.ts
-getCurrentList(userId: string): Promise<{ placeId: number; rank: number }[]>
-getAllCurrentLists(): Promise<Map<string, { placeId: number; rank: number }[]>>
+// B — lib/tags.ts
+getTags(): Promise<Tag[]>
+
+// B — lib/reviews.ts
+submitReview(placeId: number, tagIds: number[], source: ReviewSource): Promise<number> // rpc submit_review
+getCurrentReviews(): Promise<CurrentReview[]>
+getFirstReviews(): Promise<CurrentReview[]>
+
+// B — lib/points.ts
+getPointBalance(userId: string): Promise<number>
+getReviewContext(placeId: number): Promise<{ isFirst: boolean; pioneer: boolean }>
+previewPoints(tagIds: number[], tags: Tag[], ctx: { isFirst: boolean; pioneer: boolean }): number
+
+// B — lib/recommend.ts
+recommend(userId: string, kind: RecKind, excludeIds?: number[]): Promise<RecItem[]>
 
 // C — lib/ranking.ts
-computeScores(lists: Map<string, { placeId: number; rank: number }[]>):
-  Map<number, { score: number; n: number; nFirst: number }>
+computeScores(lists: Map<string, ListItem[]>):
+  Map<number, { score: number; n: number; nFirst: number }>   // score = S̃
 
 // C — lib/tagStats.ts
+wilsonLB(k: number, n: number): number
 computeTagStats(reviews: CurrentReview[], tags: Tag[]):
   Map<number, { assignedTagIds: number[]; positive: string[] /* 통과한 평가형 group_key */ }>
 
 // C — lib/premium.ts
 hasPremium(userId: string): Promise<boolean>
-
-// B — lib/points.ts
-getPointBalance(userId: string): Promise<number>
+buyPremium(): Promise<void>
 ```
 
 ## 11. 우선순위 (해커톤)
-1. **필수** (데모 핵심): 가입·로그인 / 검색 + Top 3 저장 / 온보딩 태그 입력 / 순위 목록 + 대분류 필터 / 무료 추천 1곳
-2. **목표**: 태그 필터 / 가게 상세 + 간단 리뷰 / 포인트 표시·포인트 추천 / 모의 결제 + 프리미엄 5곳 / 내 맛집 편집
+1. **필수** (데모 핵심): 가입·로그인 / 검색 + Top 3 저장 / 온보딩 태그 입력 / 순위 목록 + 대분류 필터 / 태그 집계 함수 computeTagStats(추천 CB가 사용) / 무료 추천 1곳
+2. **목표**: 태그 필터 UI / 가게 상세 + 간단 리뷰 / 포인트 표시·포인트 추천 / 모의 결제 + 프리미엄 5곳 / 내 맛집 편집
 3. **여유**: 카카오 지도 뷰 / 유도 모달·배너 다듬기 / 취향 분석
 
-## 12. 해커톤에서 뺀 것 (기획서 대비)
-배달 기능 전부, 학교 인증, 관리자 페이지, 대표 메뉴·메추리 픽, 세부 조건 추천(유료 후속), 구독 해지, 포인트 주간 한도·회수, 폐업 처리, IP 가입 제한, 리뷰·리스트 삭제
+## 12. 해커톤에서 뺀 것·바꾼 것 (기획서 대비)
+Claude Code가 기획서를 보고 아래 항목을 구현하지 않도록 전부 적는다.
+
+**뺀 것**: 배달 기능 전부, 학교 인증, 관리자 페이지·검수 큐·제보, 대표 메뉴·메추리 픽, 세부 조건 추천(유료 후속), 구독 해지, 포인트 주간 한도·회수·소멸, 폐업 처리, IP 가입 제한, 로그인 실패 잠금, 비밀번호 재발급, 저장·리뷰·추천 빈도 제한, 리뷰·리스트 삭제, Region(지역) 테이블·서비스 지역 밖 차단, 초기 음식점 일괄 수집, 소분류 자동 분류·관리자 보정, 태그 그룹 관리자 편집, 취향 분석(F-14, 여유 시), 필터 상태 URL 쿼리, PWA, 추천 API 서버 차단(403)
+
+| 기획서 | plan.md (해커톤) | 이유 |
+|---|---|---|
+| 리뷰 1인 1가게 upsert | 추가만, 최신이 현재 리뷰 | update 정책 없이 RLS 단순화 |
+| RankingEntry(사용자별 현재 순위) | ranking_lists 스냅샷, 최신이 현재 | 위와 같음, 이력 보존 |
+| PointLedger 원장 | reviews·recommendations에서 계산 | 테이블·쓰기 경로 축소 |
+| PlaceScore·PlaceTagStat 캐시 | 앱에서 매번 계산 | 데이터 수십~수백 행 |
+| 대분류·소분류 2단 Category 테이블 | places.category 문자열 + cuisine 칩 | 관리자 없음 |
+| CB = 0.40 소분류 ‖ 0.25 맛 ‖ 0.15 분위기 ‖ 0.20 상황 | §5-6 (대분류 원핫 추가, cuisine 칩 사용) | 소분류 자동 분류가 없음 |
+| Subscription 상태·PaymentProvider | subscriptions 결제 1회 = 1줄, period_end > now() | 모의 결제만 |
+| 개척: 그 가게 리뷰 < 3건 | 그 가게 첫 리뷰 남긴 다른 사용자 < 3 | 추가만 구조에서 같은 의미 |
