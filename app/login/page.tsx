@@ -1,8 +1,8 @@
 'use client';
 // 담당 A — plan.md §10 로그인·가입 (화면 1)
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { signIn, signUp } from '@/lib/auth';
+import { signIn, signUp, useUser } from '@/lib/auth';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -10,6 +10,12 @@ export default function LoginPage() {
   const [pw, setPw] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'signup' | 'signin' | null>(null);
+  const { user, loading } = useUser();
+
+  // 이미 로그인한 채로 들어오면 순위로. 가입·로그인 진행 중에는 그쪽 이동을 따른다
+  useEffect(() => {
+    if (!loading && user && busy === null) router.replace('/ranking');
+  }, [loading, user, busy, router]);
 
   async function run(kind: 'signup' | 'signin') {
     setError(null);
