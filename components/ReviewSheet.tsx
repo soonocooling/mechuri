@@ -1,7 +1,7 @@
 'use client';
 // 담당 B — plan.md §10 칩 선택 시트
 // 제출은 lib/reviews.ts의 submitReview(= §4-1 submit_review RPC)를 부른다
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { Category, ReviewSource, Tag } from '@/lib/types';
 import { getTags, groupTags } from '@/lib/tags';
 import { submitReview } from '@/lib/reviews';
@@ -27,6 +27,28 @@ export default function ReviewSheet({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // iOS 햅틱용 숨김 스위치 — React 타입에 switch 속성이 없어 ref로 붙인다
+  const hapticId = useId();
+  const hapticInputRef = useRef<HTMLInputElement>(null);
+  const hapticLabelRef = useRef<HTMLLabelElement>(null);
+  useEffect(() => {
+    hapticInputRef.current?.setAttribute('switch', '');
+  }, []);
+
+  // 사용자 탭 핸들러 안에서 동기적으로 불러야 한다 (iOS는 탭 밖에서 무시)
+  function hapticTap() {
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      try {
+        navigator.vibrate(10);
+      } catch {}
+      return;
+    }
+    // navigator.vibrate가 없는 iOS 18 사파리 — 스위치 체크박스 토글 햅틱
+    try {
+      hapticLabelRef.current?.click();
+    } catch {}
+  }
+
   // 칩 목록은 열 때 한 번만 읽는다 (plan.md §6 시드 72행)
   useEffect(() => {
     let alive = true;
@@ -51,7 +73,9 @@ export default function ReviewSheet({
 
   function toggle(tag: Tag, groupTagIds: number[], maxSelect: number) {
     setError(null);
-    setSelected((prev) => {
+    // 햅틱을 탭 안에서 동기적으로 내야 해서 다음 상태를 여기서 바로 계산한다
+    const next = (() => {
+      const prev = selected;
       if (prev.includes(tag.id)) return prev.filter((id) => id !== tag.id);
       const inGroup = prev.filter((id) => groupTagIds.includes(id));
       // 평가형·가격대처럼 한 개만 고르는 그룹은 누른 칩으로 바꿔준다
@@ -59,7 +83,10 @@ export default function ReviewSheet({
       // 서술형은 max_select를 넘으면 더 고를 수 없다 (§4-1 — 이 검사는 앱에서)
       if (inGroup.length >= maxSelect) return prev;
       return [...prev, tag.id];
-    });
+    })();
+    if (next === selected) return; // 선택이 안 바뀌면 햅틱도 없다
+    setSelected(next);
+    hapticTap();
   }
 
   async function submit() {
@@ -68,6 +95,10 @@ export default function ReviewSheet({
     setBusy(true);
     try {
       await submitReview(placeId, selected, source);
+      // await 뒤라 iOS 스위치 햅틱은 동작하지 않는다 — vibrate 지원 환경만
+      try {
+        navigator.vibrate?.(30);
+      } catch {}
       // TODO(B2): previewPoints로 계산한 적립 포인트를 넘긴다 (plan.md §5-5)
       onDone(0);
     } catch (e) {
@@ -79,6 +110,22 @@ export default function ReviewSheet({
 
   const body = (
     <div className="flex flex-col gap-5">
+      {/* iOS 햅틱용 — 화면·접근성 트리·포커스 순서에서 모두 뺀다 */}
+      <input
+        ref={hapticInputRef}
+        id={hapticId}
+        type="checkbox"
+        aria-hidden="true"
+        tabIndex={-1}
+        className="pointer-events-none sr-only"
+      />
+      <label
+        ref={hapticLabelRef}
+        htmlFor={hapticId}
+        aria-hidden="true"
+        tabIndex={-1}
+        className="pointer-events-none sr-only"
+      />
       {/* TODO(B2): "입력한 정보 N개 · +N P" — getReviewContext 1회 + previewPoints (plan.md §5-5) */}
       <p className="text-sm text-gray-500">입력한 정보 {selected.length}개</p>
 
