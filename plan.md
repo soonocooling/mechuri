@@ -232,11 +232,13 @@
 places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 
 ## 5. 계산 규칙 (앱 코드에서 계산, DB 뷰 없음)
+전체 조회는 Supabase API 기본 최대 1000행이라 넘으면 에러 없이 잘린다. 해커톤 규모에선 문제없고, 넘으면 `range`로 나눠 조회한다.
 
 ### 5-1. 현재 데이터
 - 현재 리스트: 사용자별 created_at 최신 ranking_lists의 ranking_items
 - 현재 리뷰: (user_id, place_id)별 created_at 최신 reviews + 그 review_tags
 - 첫 리뷰: (user_id, place_id)별 created_at 최초 reviews (포인트 계산용)
+- created_at이 같으면 id가 큰 쪽을 최신, 작은 쪽을 최초로 본다 (seed처럼 한 번에 넣은 행은 created_at이 같을 수 있음)
 
 ### 5-2. 순위 점수 (`lib/ranking.ts`)
 - w(r) = 1 / log₂(r + 1)
@@ -263,11 +265,13 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 - 개척: 기본 충족 + 이 리뷰 이전에 그 가게에 첫 리뷰를 남긴 다른 사용자 수 < 3 → 1P 대신 2P
 - 풍부: g ≥ 5 → +1P (기본 충족 시에만)
 
-온보딩 완주 보너스: 사용자의 is_onboarding = true 리스트의 rank 1~3 가게 모두 기본 충족 첫 리뷰가 있으면 +3P (1회)
+온보딩 완주 보너스: 사용자의 is_onboarding = true 리스트의 rank 1~3 가게 모두 기본 충족 첫 리뷰가 있으면 +3P (1회). 기준 리스트는 is_onboarding = true 중 가장 먼저 저장된 것(id 최소)
 
 잔액 = 적립 합 − 3 × (kind = point 인 recommendations 수). 잔액 < 3이면 포인트 추천 버튼 비활성
 
 - 미리보기: ReviewSheet가 열릴 때 `getReviewContext(placeId)`로 { isFirst, pioneer }를 한 번 받고, 칩을 누를 때마다 동기 함수 `previewPoints(tagIds, tags, ctx)`로 계산한다(칩마다 DB 조회 금지). isFirst = false면 0P
+- `getReviewContext`는 로그인 세션 사용자 기준(`supabase.auth.getUser`)으로 계산한다
+- 시트를 열어둔 사이 다른 사용자 리뷰로 미리보기와 실제 적립이 달라지는 경우는 무시한다
 - 온보딩 완료 화면 P = 세 ReviewSheet의 earned 합 + (세 곳 모두 earned > 0이면 3). 신규 사용자에겐 earned > 0 ⇔ 기본 충족 첫 리뷰이므로 §5-5 보너스 조건과 같다
 
 ### 5-6. 추천 (`lib/recommend.ts`)
@@ -281,16 +285,22 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 - POP(p) = S̃(p) / max S̃
 - α = min(1, k/20), k = 내 리스트와 1곳 이상 겹치는 다른 사용자 수
 - score = α·CF + (1−α)·(0.6·CB + 0.4·POP)
+- score 동점은 §5-2 동점 규칙(n_p ↓ → 1위 표 수 ↓ → 이름 ↑)
 - 사유: 세 항 중 기여 최대 항 기준
   - CF → "〈내 1위 가게〉를 꼽은 사람들이 많이 꼽은 곳"
   - CB → "#〈일치 태그 1~2개〉 취향과 맞음"
-  - POP → "국캠 전체 〈n〉위"
+  - POP → "국캠 전체 〈n〉위". n은 순위 탭과 같은 기준(n_p ≥ 2 가게만, S̃ 내림차순)의 순위. n_p = 1이면 사유는 "신규 발견"
 - 개수·조건
   | kind | 결과 수 | 조건 |
   |---|---|---|
   | free | 1 | 이번 주(월 00:00 KST~) free 기록이 없을 때. 있으면 새로 계산하지 않고 그 결과 표시 |
   | point | 1 | 잔액 ≥ 3 |
   | premium | 5 | hasPremium = true, 횟수 무제한 |
+- recommendations insert와 이번 주 free 결과 재사용은 `recommend()` 안에서 처리한다
+- 결과가 0곳이면 insert하지 않고 빈 상태 문구를 표시한다 (free 주간 잠김·point 3P 차감 방지)
+- free 추천은 화면 진입 시 자동 실행하지 않고 버튼을 눌렀을 때 실행한다 (개발 모드에서 effect가 두 번 실행돼 중복 저장되는 것 방지)
+- 포인트 추천 버튼은 요청 중 비활성 (연타로 잔액이 음수가 되는 것 방지)
+- 프리미엄 "다시 추천"의 excludeIds는 페이지 상태로 보관한다(새로고침하면 초기화)
 
 ### 5-7. 프리미엄 (`lib/premium.ts`)
 - hasPremium(userId) = 본인 subscriptions 중 period_end > now() 가 하나라도 있음
@@ -333,6 +343,7 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 
 시드 총 72행 (cuisine 30 + taste 10 + mood 6 + situation 8 + price 3 + 평가형 5×3).
 리뷰 시트의 cuisine 칩은 가게 category와 같은 parent_label 칩만 보여준다(기타면 전부).
+화면 표시 순서는 그룹을 이 표 순서(cuisine → wait)로, 그룹 안은 sort 순. sort는 그룹마다 1부터 다시 시작한다.
 
 ## 7. 인증
 - Supabase Auth 이메일 로그인 사용. 아이디 `soono` → 이메일 `soono@users.mechuri.app` 으로 변환해서 가입·로그인
@@ -341,6 +352,7 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 - Supabase 대시보드 Authentication → Email에서 **Confirm email 끔** (팀장)
 - 화면에 표시하는 아이디 = 이메일의 @ 앞부분
 - Top 3 미입력자: 추천 탭 잠금 + 앱을 열 때마다 입력 유도 모달 1회 + 순위 탭 상단 배너
+- Top 3 미입력자의 추천 탭 잠금 화면은 `app/recommend`(B)가 그린다
 
 ## 8. 카카오 검색
 - `GET /api/places/search?q=검색어` (서버 라우트, REST 키는 서버에서만)
