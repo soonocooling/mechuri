@@ -13,12 +13,14 @@
 파일 단위 담당은 plan.md §10. **남의 파일은 고치지 않는다.** 필요하면 채팅으로 요청한다.
 
 ## 1. 미리 각자 할 것 (세션 전)
-- [ ] Node 20 이상, git, Cursor + Codex(또는 Claude Code) 동작 확인
+- [ ] Node 20 이상, git, Cursor + Claude Code(확장 또는 터미널 `claude`) 로그인·동작 확인
 - [ ] GitHub 팀 저장소 초대 수락
 - [ ] 카카오 디벨로퍼스(developers.kakao.com)에서 **각자** 앱 하나 생성
   - 플랫폼 → Web → 사이트 도메인 `http://localhost:3000` 등록
   - REST API 키, JavaScript 키 확인(본인 `.env.local`에만 씀. 채팅에 붙이지 않기)
   - 팀장은 추가로 Vercel 배포 도메인도 등록
+  - 앱 설정에 카카오맵(로컬·지도) 사용 설정 항목이 있으면 켜기. 검색이 403·권한 오류면 이것부터 확인
+- [ ] (팀장) plan.md 초안 기준으로 schema.sql·뼈대를 **미리** 만들어 둔다. 설계 검토에서 바뀐 부분만 세션 중에 다시 생성 → 0:20~0:30 병목 축소
 
 ## 2. 세션 타임라인
 
@@ -27,7 +29,7 @@
 | 0:00 | 설계 ① plan.md §1 화면 3장 함께 읽기 | Supabase 프로젝트 생성(이름 = 저장소 이름, Region Seoul, DB 비밀번호는 팀장만 보관) → B·C 초대 | |
 | 0:05 | 설계 ②~④ §2~§4 검토, 바꿀 것 합의 | | Supabase 초대 수락 |
 | 0:17 | 설계 ⑤ plan.md 확정 → main에 올림 | | |
-| 0:20 | | 설계 ⑥ schema.sql 생성 → SQL Editor 실행 → Confirm email 끄기 → 뼈대 PR | `.env.local` 작성 |
+| 0:20 | | 설계 ⑥ schema.sql 확정 → SQL Editor 실행 → Confirm email 끄기 → 뼈대 PR | `.env.local` 작성 → schema 실행 후 B: 테스트 계정 5개 생성(Authentication → Add user, Auto Confirm) / C: seed_test.sql 생성·실행(§7-6) |
 | 0:30~ | 각자 브랜치에서 기능 루프(§5) | 뼈대 merge 후 A 작업 | 뼈대 merge 후 pull → B·C 작업 |
 
 설계 ②~④에서 바꾼 게 있으면 plan.md를 먼저 고치고 확정한다. plan.md는 이미 초안이 있으므로 0:05~0:17은 **검토·수정** 시간이다.
@@ -41,6 +43,7 @@
    - [ ] 테이블 8개(places, ranking_lists, ranking_items, tags, reviews, review_tags, recommendations, subscriptions)
    - [ ] 모든 테이블 RLS 켜짐
    - [ ] tags에 시드 행 72줄이 들어가 있음
+   - [ ] Database → Functions에 save_list, submit_review 있음
 4. Authentication → Sign In / Providers → Email → **Confirm email 끔**
 
 ### 3-2. 뼈대 PR (B·C가 여기서 출발)
@@ -48,10 +51,12 @@
 - [ ] Next.js(App Router, TypeScript, Tailwind) 초기화
 - [ ] `plan.md`, `schema.sql`, `docs/product-spec.md`
 - [ ] `.env.example` (키 이름만 4개, plan.md §9)
-- [ ] `lib/supabase.ts` 연결 파일
+- [ ] `CLAUDE.md` (§11 내용 그대로)
+- [ ] `lib/types.ts` (plan.md §10 타입 전부), `lib/supabase.ts` 연결 파일
 - [ ] `components/BottomTabs.tsx` + `app/layout.tsx` (탭: 순위 / 추천 / 내 맛집 / 마이)
 - [ ] **plan.md §10의 모든 파일을 빈 껍데기로 생성**: 함수는 §10 "함수 약속" 모양 그대로, 속은 더미값 반환. 페이지는 제목만
   → 이렇게 해야 B·C가 A를 기다리지 않고 import해서 쓸 수 있다
+- [ ] `npm run build` 통과 후 PR
 
 ### 3-3. Vercel
 - [ ] 저장소 연결 → 환경변수 4개 등록 → 배포
@@ -74,12 +79,14 @@ NEXT_PUBLIC_KAKAO_MAP_KEY=
 ## 5. 기능 만들 때마다 도는 루프
 1. 테이블을 바꿔야 하면 → **먼저 채팅에 알림** ("reviews에 열 추가하려고 함")
 2. plan.md부터 수정 → AI에게 변경 SQL 받기 → schema.sql 끝에 추가 → SQL Editor 실행 → 같은 내용 PR
-3. AI에게 기능 요청할 때 `@plan.md`와 담당 파일을 `@`로 지정
+3. Claude Code에 기능 요청할 때 `@plan.md`와 담당 파일을 `@`로 지정. 작업 하나 끝나면 `/clear` 후 다음 작업
 4. Table Editor에서 행이 실제로 생겼는지 눈으로 확인 ("완료했습니다"를 믿지 않기)
    - 4-1. 표엔 있는데 앱에 안 보이면 → RLS부터 확인(규칙이 없으면 에러 없이 빈 목록)
-5. merge 후 Vercel 배포 → 폰으로 한 번 더 확인
+5. PR 전 `npm run build` 통과 (타입 에러 하나가 main의 Vercel 배포 전체를 막는다)
+6. merge 후 Vercel 배포 → 폰으로 한 번 더 확인
 
 PR은 작게, 자주. merge 전 `git pull origin main`으로 최신 main을 받아 충돌을 먼저 해결한다.
+새 npm 패키지는 설치 전 채팅에 알린다. `package-lock.json` 충돌은 main 쪽을 받고 `npm install`을 다시 돌려 해결한다.
 
 ## 6. 개인별 작업 순서
 
@@ -87,9 +94,9 @@ PR은 작게, 자주. merge 전 `git pull origin main`으로 최신 main을 받�
 | 순서 | 우선순위 | 작업 | 완료 확인 |
 |---|---|---|---|
 | A1 | 필수 | `lib/auth.ts` + `app/login` (아이디→`@users.mechuri.app` 변환, 8자 검사) | 가입하면 Authentication → Users에 `아이디@users.mechuri.app` 생김 |
-| A2 | 필수 | `api/places/search` + `PlaceSearch` + `categorize` | "국밥" 검색 시 국캠 근처 결과, 선택하면 places에 행 추가 |
-| A3 | 필수 | `lib/lists.ts` + 온보딩 1단계(Top 3 선택·순서) | 저장 시 ranking_lists 1줄(is_onboarding=true) + ranking_items 3줄 |
-| A4 | 필수 | 온보딩 2·3단계: B의 `ReviewSheet embedded` × 3 → 완료 화면 | 3곳 입력 후 "+N P" 완료 화면, 버튼으로 추천 탭 이동 |
+| A2 | 필수 | `api/places/search`(DB 안 씀) + `PlaceSearch` + `categorize` + `lib/places.ts`(ensurePlace는 브라우저에서) | "국밥" 검색 시 국캠 근처 결과, 선택하면 places에 행 추가 |
+| A3 | 필수 | `lib/lists.ts`(saveList = rpc save_list) + 온보딩 1단계(Top 3 선택·순서) | 저장 시 ranking_lists 1줄(is_onboarding=true) + ranking_items 3줄 |
+| A4 | 필수 | 온보딩 2·3단계: B의 `ReviewSheet embedded` × 3 → 완료 화면(P 계산은 plan.md §5-5) | 3곳 입력 후 "+N P" 완료 화면, 버튼으로 추천 탭 이동 |
 | A5 | 목표 | `app/my-list` 편집(추가·삭제·순서, 3~10개 검사, 저장 = 새 리스트) | 저장할 때마다 ranking_lists 새 줄 |
 | A6 | 여유 | `OnboardingNag`: Top 3 없으면 앱 열 때 모달 1회 + 추천 탭 잠금 | 새 계정으로 확인 |
 
@@ -98,22 +105,24 @@ B의 ReviewSheet가 아직 껍데기면 A4는 "건너뛰기"만 동작하는 상
 ### B — 태그 리뷰·포인트·추천
 | 순서 | 우선순위 | 작업 | 완료 확인 |
 |---|---|---|---|
-| B1 | 필수 | `lib/tags.ts` + `components/ReviewSheet` (그룹별 칩, 최대 선택 수, 평가형 3단, cuisine은 가게 대분류 칩만) | 제출 시 reviews 1줄 + review_tags N줄 |
-| B2 | 필수 | ReviewSheet 상단 "입력한 정보 N개 · +N P" 실시간 표시(`previewPoints`) | 칩 누를 때마다 숫자 변함 |
-| B3 | 필수 | `lib/recommend.ts` 무료 1곳 + `app/recommend` | 같은 주 두 번째엔 저장된 결과가 뜸 |
+| B1 | 필수 | `lib/tags.ts` + `lib/reviews.ts`(submitReview = rpc submit_review) + `components/ReviewSheet` (그룹별 칩, 최대 선택 수, 평가형 3단, cuisine은 가게 대분류 칩만) | 제출 시 reviews 1줄 + review_tags N줄 |
+| B2 | 필수 | ReviewSheet 상단 "입력한 정보 N개 · +N P" 실시간 표시(열 때 `getReviewContext` 1회 + 동기 `previewPoints`) | 칩 누를 때마다 숫자 변함 |
+| B3 | 필수 | `lib/recommend.ts` 무료 1곳 + `app/recommend`. C의 computeTagStats가 아직 더미면 CB = 0으로 두고 CF + POP만으로 먼저 동작 | 같은 주 두 번째엔 저장된 결과가 뜸 |
 | B4 | 목표 | `lib/points.ts` 잔액 계산 + "3P로 한 번 더" | 잔액 3 줄고 recommendations(kind=point) 1줄 |
 | B5 | 목표 | 프리미엄이면 5곳 + "다시 추천"(직전 제외) | C의 `hasPremium` 사용 |
 
-A·C 작업 전 테스트 데이터: 앱 가입 화면이 아직 없으면 Supabase → Authentication → Add user로 `test1@users.mechuri.app` 등 3명 생성 후, Table Editor로 places·ranking_lists·ranking_items 몇 줄 직접 입력.
+테스트 데이터: 0:20에 B가 만든 계정 5개(`test1@users.mechuri.app`…) + C의 seed_test.sql(§7-6). 손으로 Table Editor에 입력하지 않는다.
 
 ### C — 순위·상세·마이·결제
 | 순서 | 우선순위 | 작업 | 완료 확인 |
 |---|---|---|---|
-| C1 | 필수 | `lib/ranking.ts` + `app/ranking` 목록 + 대분류 칩 | 테스트 데이터 손계산 점수와 일치, n=1은 "신규 발견" |
-| C2 | 목표 | `lib/tagStats.ts` + `FilterSheet` (그룹 내 OR, 그룹 간 AND) | LB(2,2)=0.342 등 plan.md §5-3 검산값 일치 |
-| C3 | 목표 | `PlaceDetail` 시트: 태그·평가 분포, B의 ReviewSheet, A의 "내 맛집에 추가" | 상세에서 리뷰 제출 → 태그 갱신 |
-| C4 | 목표 | `lib/premium.ts` + `app/premium` 모의 결제 + `app/me`(아이디, 포인트, 프리미엄 만료일) | 결제하기 → subscriptions 1줄, 완료 화면 |
-| C5 | 여유 | `KakaoMap` 목록/지도 토글, 상위 30개 핀 | 핀 탭 → 상세 |
+| C0 | 필수 | (0:20) seed_test.sql 생성·실행 (§7-6) | Table Editor에 places 12줄, 리스트 5개, 리뷰가 보임 |
+| C1 | 필수 | `lib/ranking.ts` + `app/ranking` 목록 + 대분류 칩 | 시드 데이터 손계산 점수와 일치, n=1은 "신규 발견" |
+| C2 | 필수 | `lib/tagStats.ts` (wilsonLB, computeTagStats). UI 없음, B의 추천이 사용 | LB(2,2)=0.342 등 plan.md §5-3 검산값 일치 |
+| C3 | 목표 | `FilterSheet` (그룹 내 OR, 그룹 간 AND) + 순위 목록 태그 표시 | 한식 + "얼큰한 + 혼밥"이 시드 의도대로 걸러짐 |
+| C4 | 목표 | `PlaceDetail` 시트: 태그·평가 분포, B의 ReviewSheet, A의 saveList로 "내 맛집에 추가"(현재 리스트 + 이 가게, 10개면 막음) | 상세에서 리뷰 제출 → 태그 갱신 |
+| C5 | 목표 | `lib/premium.ts` + `app/premium` 모의 결제 + `app/me`(아이디, 포인트, 프리미엄 만료일) | 결제하기 → subscriptions 1줄, 완료 화면 |
+| C6 | 여유 | `KakaoMap` 목록/지도 토글, 상위 30개 핀 | 핀 탭 → 상세 |
 
 ## 7. 복붙용 프롬프트
 
@@ -133,19 +142,23 @@ A·C 작업 전 테스트 데이터: 앱 가입 화면이 아직 없으면 Supab
 - §2~§3 테이블·열·제약, id는 identity, created_at 기본값 now(), user_id·created_by 기본값 auth.uid()
 - subscriptions.period_end 기본값 now() + interval '30 days'
 - §4 RLS: 모든 테이블 enable, select·insert 정책만. update·delete 정책은 만들지 마
+- §4-1 함수 save_list, submit_review: language plpgsql, security invoker, 한 트랜잭션. 검사 실패 시 raise exception. authenticated에 execute 권한
 - ranking_items·review_tags insert는 부모 행의 user_id가 auth.uid()인지도 확인
-- §6 tags 시드 insert 포함
-- 한 번에 실행 가능하게, 다시 실행해도 에러 안 나게 if not exists 사용
+- §6 tags 시드 insert 포함(72행, 재실행 시 중복 삽입 안 되게)
+- 한 번에 실행 가능하게, 다시 실행해도 에러 안 나게 if not exists / create or replace 사용
 ```
 
 ### 7-3. 뼈대 PR (팀장)
 ```
 @plan.md 기준으로 Next.js(App Router, TypeScript, Tailwind) 뼈대를 만들어줘.
+- CLAUDE.md: @WORK_SPLIT.md §11 내용 그대로
+- lib/types.ts: §10 함수 약속의 타입 전부
 - lib/supabase.ts: @supabase/supabase-js 브라우저 클라이언트, 환경변수는 §9 이름 사용
 - .env.example: §9 이름만
 - app/layout.tsx + components/BottomTabs.tsx: 순위 /ranking, 추천 /recommend, 내 맛집 /my-list, 마이 /me
 - §10 표의 모든 파일을 생성하되, 함수는 "함수 약속" 시그니처 그대로 두고 더미값을 반환해. 페이지는 제목만.
-- 기능 구현은 하지 마.
+- 모든 페이지·컴포넌트는 'use client'.
+- 기능 구현은 하지 마. 끝나면 npm run build 통과시켜.
 ```
 
 ### 7-4. 각자 첫 작업 (0:30~)
@@ -160,11 +173,13 @@ B
 @plan.md §3 tags·reviews·review_tags, §5-5, §6, §10 을 읽고
 lib/tags.ts, lib/reviews.ts, components/ReviewSheet.tsx 를 구현해줘.
 ReviewSheetProps는 §10 약속 그대로. 그룹별 max_select 지키고, 평가형은 3단 중 하나만.
+제출은 supabase.rpc('submit_review')로만. 상단 포인트 미리보기는 §5-5(getReviewContext 1회 + previewPoints).
 cuisine 칩은 placeCategory와 parent_label이 같은 것만(기타면 전부). 다른 사람 담당 파일은 수정하지 마.
 ```
 C
 ```
 @plan.md §5-1 §5-2 §5-4 §10 을 읽고 lib/ranking.ts 와 app/ranking/page.tsx 를 구현해줘.
+가게 정보는 A의 getPlaces()로 받아와.
 현재 리스트는 A의 getAllCurrentLists()로 받아와. 대분류 칩 필터, n≥2만 순위, n=1은 "신규 발견" 섹션.
 다른 사람 담당 파일은 수정하지 마.
 ```
@@ -175,6 +190,18 @@ C
 완료 조건: 〈Table Editor에서 무엇이 보이면 성공인지〉. 다른 사람 담당 파일은 수정하지 마.
 ```
 
+### 7-6. 테스트·데모 시드 (C, 0:20 schema 실행 직후)
+```
+@plan.md 를 보고 Supabase SQL Editor에서 실행할 seed_test.sql 하나만 만들어줘. 다른 파일은 건드리지 마.
+- 사용자 uuid 5개: 〈Authentication → Users에서 복사〉. SQL Editor는 auth.uid()가 null이므로 user_id·created_by를 직접 넣어
+- places 12곳: 가짜 가게, kakao_place_id는 'test-1'… , category는 §3의 12종 문자열에서 고르게
+- 사용자마다 ranking_lists 1줄 + ranking_items 3~6줄. 겹치게 해서 n≥2인 가게 6곳 이상
+- 사용자마다 reviews 4~6건 + review_tags. tag_id는 (group_key, label)로 조회해서 넣어
+- 데모 조건 ① 한식 가게 1곳 이상에서 '얼큰한'(taste)과 '혼밥'(situation)이 §5-3 기준으로 둘 다 부여됨
+- 데모 조건 ② 가게 X 하나는 taste 칩을 고른 현재 리뷰가 정확히 1개이고 그게 '진한'(LB 0.207, 미부여) → 데모 리뷰 1건으로 2/2(0.342) 부여
+- 끝에 검증용 select를 주석으로
+```
+
 ## 8. 연결 지점 (여기서 자주 깨진다)
 | 쓰는 쪽 | 가져다 쓰는 것 | 만드는 쪽 |
 |---|---|---|
@@ -183,6 +210,9 @@ C
 | B 추천 | getAllCurrentLists, getCurrentList | A |
 | B 추천 | computeScores, computeTagStats, hasPremium | C |
 | C 마이 | getPointBalance | B |
+| 전원 | lib/types.ts 타입 | A(뼈대) |
+| B 추천·리뷰시트, C 순위·상세 | getPlaces | A |
+| C 순위·상세·필터 | getTags, getCurrentReviews | B |
 
 약속한 함수 모양을 바꿔야 하면 plan.md §10을 먼저 고치고 채팅에 알린다.
 
@@ -198,13 +228,33 @@ C
 - [ ] 테스트 계정 5개 이상으로 리스트·리뷰를 넣어 순위와 태그가 채워져 있음 (n≥2, 태그 LB 통과)
 - [ ] Vercel 배포본에서 폰으로 1~6 전부 확인
 - [ ] 저장소·코드 어디에도 secret 키 없음
+- [ ] 4번 필터 결과가 1곳 이상 (seed 조건 ①)
+- [ ] 5번은 가게 X에 '진한' 리뷰 → 태그가 새로 붙는지 (seed 조건 ②). 아무 가게나 하면 윌슨 하한 때문에 안 바뀔 수 있음
+- [ ] 데모 계정 기준 추천 후보(내 리스트 밖 가게)가 5곳 이상
 
 ## 10. 회차 끝날 때 (atlas-prompts)
 1. Cursor 창 제목이 atlas-prompts인지 확인
 2. main pull
 3. 브랜치 생성 `prompts/〈이름〉-h2`
 4. README의 한 줄 스크립트 실행, 대상은 이번 회차 팀 폴더
+   - 스크립트가 Claude Code 기록(`~/.claude/projects/`)을 수집하는지 세션 전에 확인. Codex 기록만 읽는다면 Claude Code의 대화를 수동으로 내보낸다
 5. `prompts/〈이름〉/`에 생긴 파일 열기
 6. 비밀값·사적인 대화 삭제
 7. commit → push → PR
 8. 학회장 승인 후 merge
+
+## 11. CLAUDE.md (저장소 루트, 뼈대 PR에 포함)
+Claude Code는 이 파일을 매 대화 시작에 자동으로 읽는다. 프롬프트마다 규칙을 반복할 필요가 없어진다.
+```
+# 메추리 — Claude Code 규칙
+- 설계 기준은 plan.md. 코드와 plan.md가 다르면 임의로 맞추지 말고 멈추고 알려라.
+- docs/product-spec.md는 장기 기획서다. plan.md에 없는 기능(§12 목록 포함)은 구현하지 마라. 둘이 다르면 plan.md를 따른다.
+- 담당 파일(plan.md §10) 밖의 파일은 수정하지 마라. 필요하면 "누구에게 무엇을 요청할지"만 출력해라.
+- lib/types.ts와 plan.md §10 함수 약속의 시그니처를 바꾸지 마라.
+- 모든 페이지·컴포넌트는 'use client'. Supabase는 lib/supabase.ts 브라우저 클라이언트만 쓴다. 서버 코드는 app/api/places/search 하나.
+- 리스트·리뷰 저장은 supabase.rpc('save_list' | 'submit_review')만. ranking_lists·ranking_items·reviews·review_tags 직접 insert 금지.
+- update·delete 쿼리를 만들지 마라(RLS가 에러 없이 0행 처리한다).
+- secret·service_role 키 금지. KAKAO_REST_API_KEY는 서버 라우트에서만.
+- 새 npm 패키지는 설치 전에 물어봐라.
+- 작업을 끝내기 전에 npm run build를 통과시켜라.
+```

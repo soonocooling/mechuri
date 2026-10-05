@@ -1,5 +1,7 @@
 # 메추리
 
+> 이 문서는 장기 제품 기획서다. 해커톤 1차 구현의 기준은 `plan.md`이며, 충돌하면 `plan.md`가 우선한다. 이 문서에서 해커톤 범위 밖인 항목은 `plan.md` §12에 정리되어 있다. 구현 중 이 문서만 보고 기능을 추가하지 않는다.
+
 ## 한 줄 소개
 연세대 국제캠퍼스 학생들이 각자 꼽은 맛집 순위와 태그를 모아 만든, 지역 맛집 지도 겸 메뉴 추천 서비스.
 
@@ -36,10 +38,10 @@
 **세부 요구사항**:
 - 가입 입력: 아이디, 비밀번호, 비밀번호 확인. 이 3개 외 입력 없음
 - 아이디: 4–20자, 영문 소문자·숫자·밑줄(_). 대소문자 구분 없음(소문자로 정규화). 중복 시 즉시 "이미 사용 중인 아이디" 표시
-- 비밀번호: 8자 이상. 해시 저장(bcrypt 또는 Argon2), 평문 저장·로그 금지
+- 비밀번호: 8자 이상. 저장·해시는 Supabase Auth가 담당(auth.users, bcrypt). 우리 테이블에는 비밀번호 열이 없다
 - 가입 즉시 로그인 상태로 온보딩(F-02) 진입
 - 로그인 유지: 30일. 로그아웃은 마이 탭
-- 로그인 5회 연속 실패 시 해당 아이디 5분 잠금
+- 로그인 5회 연속 실패 시 해당 아이디 5분 잠금 [이후 — Supabase Auth 기본 기능은 IP 단위 빈도 제한뿐이라 계정 단위 잠금은 별도 구현 필요]
 - 가입 빈도 제한: 동일 IP 시간당 5계정 [결정 — 인증이 없으므로 다계정 순위 조작에 대한 최소 방어]
 - 비밀번호 찾기: 없음. 분실 시 관리자에게 문의 → 관리자가 임시 비밀번호 발급(F-16) [결정 — 이메일·전화 수집을 안 하므로 자동 복구 수단이 없음]
 - 비로그인도 순위 탭 열람 가능 [결정 — D-4]
@@ -47,7 +49,7 @@
 **완료 조건**:
 - [ ] 아이디·비밀번호·확인 3개만 입력하고 가입하면 바로 온보딩 화면이 뜬다
 - [ ] "Soono"와 "soono"는 같은 아이디로 취급되어 두 번째 가입이 거부된다
-- [ ] DB에서 비밀번호 칼럼을 조회하면 평문이 아닌 해시가 보인다
+- [ ] 우리 테이블 어디에도 비밀번호 열이 없고, Supabase Authentication → Users에 `아이디@users.mechuri.app` 계정이 생긴다
 - [ ] 같은 아이디로 5회 틀리면 6번째 시도는 올바른 비밀번호여도 5분간 거부된다
 - [ ] 비로그인 상태에서 순위 탭의 필터와 음식점 상세가 동작한다
 
@@ -408,7 +410,7 @@
 | 엔티티 | 주요 필드 | 관계 |
 |---|---|---|
 | Region | id, name, center(lat,lng), radius_m, email_domains[](이후용) | 1–N Place, User |
-| User | id, login_id(UNIQUE, 소문자), password_hash, region_id, status, must_change_password, signup_ip, created_at | 1–N RankingEntry, Review |
+| User | Supabase Auth 사용자(auth.users). 아이디 = 이메일 `〈login_id〉@users.mechuri.app`의 @ 앞부분. 이후 필요 시 profiles(user_id, region_id, status, must_change_password)로 확장 | 1–N RankingEntry, Review |
 | Place | id, region_id, kakao_place_id, name, address, location(geography), kakao_category_raw, closed(bool), created_by | N–M Category, 1–N MenuItem |
 | Category | id, parent_id(null=대분류), name, sort | 자기참조 2단계 |
 | PlaceCategory | place_id, category_id, source(auto/manual/user) | |
@@ -455,6 +457,7 @@
 - 대안 A: 가입 직후 1회만 1곳 무료 추천, 이후 무료 추천 없음
 - 대안 B: 1곳은 가입 직후 1회 특전이고, 주간 무료 추천은 기존처럼 여러 곳
 - 원래 문장 뒷부분을 알려주면 맞춰 고침
+- 해커톤 1차는 채택안으로 진행(plan.md §5-6)
 
 **D-1 "지도 앱에서 정보 불러오기"의 의미**
 - 채택안: 카카오 로컬 API로 가게를 검색해 하나씩 선택
@@ -561,7 +564,7 @@
 **권장: A.** 순위 집계(F-08), 태그 판정(F-19), 추천(F-13)이 모두 관계형 집계로 표현된다. 사용자 수백 명·음식점 수백 곳이면 추천은 요청 시 실시간 계산으로 충분하다.
 
 - 지도: 카카오맵 JavaScript SDK + 카카오 로컬 REST API. 도메인 등록 필요
-- 인증(MVP): Supabase Auth는 이메일이 필수라 아이디를 `〈login_id〉@users.mechuri.local` 형태의 내부용 주소로 변환해 쓰고 이메일 확인은 끈다. 또는 자체 users 테이블 + bcrypt + 세션 쿠키. 전자가 구현량이 적음
+- 인증(MVP): Supabase Auth를 쓴다 [결정]. 이메일이 필수라 아이디를 `〈login_id〉@users.mechuri.app` 형태의 내부용 주소로 변환하고 이메일 확인은 끈다. 실제 메일은 발송되지 않는다
 - 결제: 1차는 `MockPaymentProvider`. 이후 PG 가입(사업자등록·통신판매업 신고 선행) 후 구현체 교체
 
 ### 구현 가능성 판단
