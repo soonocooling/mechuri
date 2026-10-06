@@ -116,10 +116,20 @@
   animation: crack1 var(--crack) linear both;
 }
 
-/* 윗껍데기: 금 오른쪽 끝을 경첩 삼아 들렸다가 오른쪽 위로 날아감 */
+/* 윗껍데기: 금 오른쪽 끝을 경첩 삼아 오른쪽으로 열린 뒤 아래로 떨어짐 */
 .lidFly {
   transform-origin: 94% 49%;
   animation: lid-fly var(--open) both;
+}
+
+/* 열리기 시작하면 메추리와 문구는 위로 빠진다 */
+.quailExit {
+  transform-origin: 50% 100%;
+  animation: quail-exit var(--exit) both;
+}
+
+.captionOut {
+  animation: caption-out var(--exit) ease-in both;
 }
 
 /* 아랫껍데기: 아래로 떨어지며 사라짐 */
@@ -319,33 +329,63 @@
   }
 }
 
+/* 0~34% 경첩으로 오른쪽으로 젖혀짐(살짝 넘쳤다 돌아옴) → 44%까지 매달림 → 아래로 떨어지며 사라짐 */
 @keyframes lid-fly {
   0% {
     opacity: 1;
-    transform: none;
-    animation-timing-function: ease-out;
+    transform: translateY(0) rotate(0);
+    animation-timing-function: cubic-bezier(0.3, 0, 0.4, 1);
   }
-  28% {
+  26% {
+    transform: translateY(0) rotate(122deg);
+    animation-timing-function: ease-in-out;
+  }
+  34%,
+  44% {
     opacity: 1;
-    transform: rotate(-32deg);
-    animation-timing-function: ease-in;
+    transform: translateY(0) rotate(112deg);
+    animation-timing-function: cubic-bezier(0.5, 0, 0.9, 0.6);
   }
   100% {
     opacity: 0;
-    transform: translate(60vw, -80dvh) rotate(50deg);
+    transform: translateY(55dvh) rotate(150deg);
   }
 }
 
+/* 윗껍데기가 젖혀진 뒤에 같이 떨어진다 */
 @keyframes base-fall {
   0%,
-  20% {
+  36% {
     opacity: 1;
-    transform: none;
-    animation-timing-function: ease-in;
+    transform: translateY(0) rotate(0);
+    animation-timing-function: cubic-bezier(0.5, 0, 0.9, 0.6);
   }
   100% {
     opacity: 0;
-    transform: translateY(45dvh) rotate(-10deg);
+    transform: translateY(55dvh) rotate(-12deg);
+  }
+}
+
+/* 메추리: 살짝 웅크렸다가 위로 빠져 화면 밖으로 (아무것도 가리지 않게) */
+@keyframes quail-exit {
+  0% {
+    transform: none;
+    animation-timing-function: ease-out;
+  }
+  22% {
+    transform: translateY(6px) scale(1.06, 0.92);
+    animation-timing-function: cubic-bezier(0.5, 0, 0.75, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(calc(-1 * (var(--quail-top) + var(--quail-size) + 24px)));
+  }
+}
+
+@keyframes caption-out {
+  to {
+    opacity: 0;
+    transform: translateY(-16px);
   }
 }
 
@@ -359,7 +399,9 @@
   .crack3,
   .crack1,
   .lidFly,
-  .baseFall {
+  .baseFall,
+  .quailExit,
+  .captionOut {
     animation: none;
   }
 }

@@ -68,6 +68,8 @@ const Z_FRONT = 62;
 const LAP_MS = 700;
 /** 빈 알 문구를 보여주는 시간 */
 const EMPTY_HOLD_MS = 2400;
+/** 열림 시간 중 메추리가 위로 빠지는 비율 */
+const EXIT_RATIO = 0.4;
 
 const TIMING = {
   full: { intro: 300, minLaps: 2, drop: 1000, settle: 400, crack: 2000, open: 1600 },
@@ -199,13 +201,16 @@ function EggHalf({
 
 const display = Do_Hyeon({ weight: '400', subsets: ['latin'], fallback: ['system-ui', 'sans-serif'] });
 
+/** 페이지가 벌어지기 시작하는 틈. 화면 좌표(px) */
+export type HatchSlit = { y: number; left: number; right: number };
+
 type EggHatchProps = {
   variant: Variant;
   meal: Meal;
   /** recommend() 결과: 기다리는 중 / 1곳 이상 / 0곳. 에러면 페이지가 이 층을 바로 내린다 */
   outcome: 'pending' | 'found' | 'empty';
-  /** 5단계 시작. crackY = 금의 화면 y(px), durationMs = 페이지가 벌어지는 시간 */
-  onOpen: (crackY: number, durationMs: number) => void;
+  /** 5단계 시작. slit = 금의 화면 위치(px: 높이 y, 알 왼쪽·오른쪽 끝), durationMs = 페이지가 벌어지는 시간 */
+  onOpen: (slit: HatchSlit, durationMs: number) => void;
   /** 연출 끝(껍데기가 다 사라짐, 또는 빈 알 문구 후). 페이지가 이 층을 내린다 */
   onFinish: () => void;
 };
@@ -239,7 +244,10 @@ export default function EggHatch({ variant, meal, outcome, onOpen, onFinish }: E
         return;
       case 'crack': {
         const rect = eggRef.current?.getBoundingClientRect();
-        onOpen(rect ? rect.top + rect.height * CRACK_Y_RATIO : window.innerHeight / 2, t.open);
+        const slit = rect
+          ? { y: rect.top + rect.height * CRACK_Y_RATIO, left: rect.left, right: rect.right }
+          : { y: window.innerHeight / 2, left: window.innerWidth / 2, right: window.innerWidth / 2 };
+        onOpen(slit, t.open);
         vibrate();
         setPhase('open');
         return;
@@ -266,6 +274,8 @@ export default function EggHatch({ variant, meal, outcome, onOpen, onFinish }: E
     '--drop': `${t.drop}ms`,
     '--crack': `${t.crack}ms`,
     '--open': `${t.open}ms`,
+    // 열리기 시작하면 메추리·문구는 이 시간 안에 위로 빠진다 (페이지가 넓게 벌어지기 전)
+    '--exit': `${Math.round(t.open * EXIT_RATIO)}ms`,
   } as CSSProperties;
 
   const caption =
@@ -298,10 +308,13 @@ export default function EggHatch({ variant, meal, outcome, onOpen, onFinish }: E
   return (
     <>
       <div className={styles.back} style={{ ...vars, zIndex: Z_BACK }}>
-        <p role="status" className={`${display.className} ${styles.caption}`}>
+        <p
+          role="status"
+          className={`${display.className} ${styles.caption} ${opening ? styles.captionOut : ''}`}
+        >
           {caption}
         </p>
-        <div className={styles.quail}>
+        <div className={`${styles.quail} ${opening ? styles.quailExit : ''}`}>
           <div className={phase === 'lay' ? styles.bob : undefined}>
             <Image
               src="/brand/mechuri-mascot.svg"

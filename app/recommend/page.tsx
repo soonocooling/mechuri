@@ -9,6 +9,7 @@ import EggHatch, {
   EMPTY_EGG_MESSAGE,
   HATCH_PAGE_Z,
   layingMessage,
+  type HatchSlit,
   mealNow,
   type Meal,
 } from '@/components/EggHatch';
@@ -126,6 +127,8 @@ const REVEAL_STYLE: CSSProperties = {
 };
 /** layout.tsx의 body·main과 같은 폭·여백 → 일반 흐름으로 돌아갈 때 내용이 제자리 */
 const REVEAL_INNER = 'mx-auto w-full max-w-md px-4 py-4';
+/** 열림 시간 중 틈이 열리기 전 기다리는 비율 (윗껍데기가 먼저 젖혀지기 시작) */
+const REVEAL_DELAY = 0.1;
 
 /** 이번 주 무료 추천 — 반점 무늬를 깐 유일한 카드 */
 function FreeCard({ items, daysLeft }: { items: Shown[]; daysLeft: number }) {
@@ -202,7 +205,7 @@ function StartScreen({
       {/* recommend()가 0곳을 돌려준 경우. 저장되지 않았으니 다시 시도할 수 있다 (§5-6) */}
       {empty && <EmptyNote />}
       <button type="button" className={PRIMARY} disabled={busy} onClick={onStart}>
-        {loading ? layingMessage(meal) : '이번 주 추천 받기'}
+        {loading ? layingMessage(meal) : `오늘의 ${meal} 메뉴 추천 받기`}
       </button>
     </section>
   );
@@ -278,25 +281,59 @@ export default function RecommendPage() {
   const [error, setError] = useState<string | null>(null);
   // 알 깨기 연출. 응답이 온 뒤에도 연출이 끝날 때까지 버튼을 막는다
   const [hatch, setHatch] = useState<Hatch | null>(null);
-  // 5단계: 금의 화면 y(px)에서 페이지가 위아래로 벌어진다
-  const [reveal, setReveal] = useState<{ y: number; ms: number } | null>(null);
+  // 5단계: 알의 금(화면 좌표)에서 페이지가 벌어진다
+  const [reveal, setReveal] = useState<(HatchSlit & { ms: number }) | null>(null);
   const pageRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
   const busy = pending !== null || hatch !== null;
 
-  // clip-path inset: 금 위치의 가는 틈 → 화면 전체
+  // clip-path inset: 알 폭의 가는 틈 → 눈처럼 둥글게 벌어짐 → 화면 전체.
+  // 내용은 금 위치를 중심으로 조금 작게 시작해 같이 커져 알 속에서 나오는 것처럼 보인다
   useLayoutEffect(() => {
     const el = pageRef.current;
-    if (!reveal || !el) return;
+    const inner = innerRef.current;
+    if (!reveal || !el || !inner) return;
+    const w = el.clientWidth;
     const h = el.clientHeight;
     const y = Math.min(Math.max(reveal.y, 0), h);
-    const anim = el.animate(
+    const px = (v: number) => `${Math.max(Math.round(v), 0)}px`;
+    const inset = (top: number, right: number, bottom: number, left: number, round: number) =>
+      `inset(${px(top)} ${px(right)} ${px(bottom)} ${px(left)} round ${round}px)`;
+    // 윗껍데기가 젖혀지기 시작한 뒤에 틈이 열린다. 끝나는 시각은 연출과 같다
+    const delay = Math.round(reveal.ms * REVEAL_DELAY);
+    const timing: KeyframeAnimationOptions = { duration: reveal.ms - delay, delay, fill: 'both' };
+    const OPEN = 'cubic-bezier(0.25, 0.8, 0.35, 1)';
+    const SPREAD = 'cubic-bezier(0.55, 0, 0.2, 1)';
+
+    const clip = el.animate(
       [
-        { clipPath: `inset(${Math.max(y - 1, 0)}px 0px ${Math.max(h - y - 1, 0)}px 0px)` },
-        { clipPath: 'inset(0px 0px 0px 0px)' },
+        {
+          clipPath: inset(y - 1, w - reveal.right + 10, h - y - 1, reveal.left + 10, 2),
+          easing: OPEN,
+        },
+        {
+          offset: 0.3,
+          clipPath: inset(y - 46, w - reveal.right - 30, h - y - 46, reveal.left - 30, 90),
+          easing: SPREAD,
+        },
+        { clipPath: inset(0, 0, 0, 0, 0) },
       ],
-      { duration: reveal.ms, easing: 'cubic-bezier(0.65, 0, 0.35, 1)', fill: 'both' }
+      timing
     );
-    return () => anim.cancel();
+    const box = inner.getBoundingClientRect();
+    const origin = `${Math.round((reveal.left + reveal.right) / 2 - box.left)}px ${Math.round(y - box.top)}px`;
+    const grow = inner.animate(
+      [
+        { transform: 'scale(0.84)', transformOrigin: origin, easing: OPEN },
+        { offset: 0.3, transform: 'scale(0.9)', transformOrigin: origin, easing: SPREAD },
+        { transform: 'scale(1)', transformOrigin: origin },
+      ],
+      timing
+    );
+    return () => {
+      clip.cancel();
+      grow.cancel();
+    };
   }, [reveal]);
 
   // 지도에 올릴 추천 가게: free → point → premium 순, 같은 가게는 처음 것만.
@@ -512,7 +549,7 @@ export default function RecommendPage() {
       variant={hatch.kind === 'free' ? 'full' : 'short'}
       meal={meal}
       outcome={hatch.outcome}
-      onOpen={(y, ms) => setReveal({ y, ms })}
+      onOpen={(slit, ms) => setReveal({ ...slit, ms })}
       onFinish={finishHatch}
     />
   );
@@ -539,7 +576,7 @@ export default function RecommendPage() {
       : [
           mapView,
           <section key="free" className="flex flex-col gap-3">
-            <h1 className={`${display.className} text-3xl`}>이번 주 추천</h1>
+            <h1 className={`${display.className} text-3xl`}>오늘의 {meal} 메뉴 추천</h1>
             <FreeCard items={result} daysLeft={daysUntilNextFree()} />
           </section>,
         ];
@@ -601,6 +638,7 @@ export default function RecommendPage() {
     <>
       <div ref={pageRef} style={reveal ? REVEAL_STYLE : undefined}>
         <div
+          ref={innerRef}
           className={`${reveal ? REVEAL_INNER : ''} ${INK}`}
           style={{ fontFamily: SYSTEM_FONT }}
         >
