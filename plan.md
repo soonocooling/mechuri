@@ -79,16 +79,18 @@
 ┌───────────────────────┐
 │ [전체][한식][중식][일식]…│ ← 대분류 칩
 │ [필터 ⚙ 2]  [목록|지도] │ ← 태그 필터 시트
-│ 1 ○○국밥  한식 · 12명  │
+│ 1 ○○국밥               │
+│   한식 · 12명 · 1위 5표 │
 │   #얼큰한 #혼밥 #노포   │
-│ 2 △△돈까스 일식 · 9명  │
+│ 2 △△돈까스             │
+│   일식 · 9명 · 1위 2표  │
 │ …                      │
-│ 신규 발견(1명만 꼽음)   │
 └───────────────────────┘
    탭 → 상세 시트
 ┌───────────────────────┐
-│ ○○국밥  전체 1위       │
-│ 12명이 꼽음 · 1위 5명   │
+│ ○○국밥                 │
+│ 한식 · 전체 1위 · 한식 1위│
+│ 12명이 꼽음 · 1위로 꼽은 사람 5명│
 │ #얼큰한 #진한 #혼밥     │
 │ 청결 ████░ 친절 ███░░  │
 │ [간단 리뷰 남기기]      │ [저장] reviews, review_tags
@@ -276,8 +278,8 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 - w(r) = 1 / log₂(r + 1)
 - S(p) = Σ_u w(r_u(p))  (현재 리스트 기준)
 - n_p = p를 현재 리스트에 넣은 사용자 수, S̃(p) = S(p) · n_p / (n_p + 2)
-- 순위 노출: n_p ≥ 2. n_p = 1은 "신규 발견"
-- 동점: n_p ↓ → 1위 표 수 ↓ → 이름 ↑
+- 순위 노출: n_p ≥ 1 모든 가게 (신규 발견 없음)
+- 동점: S̃가 1e-9 안이면 같은 점수. 같은 점수는 같은 순위 숫자(공동 순위, 1·2·3·3·5), 표시 순서는 n_p ↓ → 1위 표 수 ↓ → 이름 ↑
 
 ### 5-3. 태그 부여 (`lib/tagStats.ts`)
 - 윌슨 하한(z = 1.96): LB(k, n) = [p̂ + z²/(2n) − z√(p̂(1−p̂)/n + z²/(4n²))] / (1 + z²/n), p̂ = k/n
@@ -289,6 +291,10 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 - 대분류: places.category 일치
 - 태그 필터: 그룹 안은 OR, 그룹끼리는 AND. 5-3에서 부여된 태그만 인정
 - 정렬: S̃ 내림차순
+- 목록 행: "{대분류} · {n}명 · 1위 {n}표" (1위 표가 0이면 "· 1위 {n}표" 생략). 필터를 걸어도 왼쪽 숫자는 전체 순위
+- 지도: 필터를 통과한 가게 전부 핀. 점 안 숫자는 전체 순위
+  - 색은 전체 순위 4단계(N = 전체 가게 수): r ≤ max(1, ⌈0.1N⌉) / ≤ ⌈0.3N⌉ / ≤ ⌈0.6N⌉ / 나머지. 공동 순위는 같은 단계, 필터와 무관
+  - 범례 "선호도 상위 10% · 30% · 60% · 그 외". 점 크기는 단계별 34·30·26·22px, 진한 단계가 위
 
 ### 5-5. 포인트 (`lib/points.ts`)
 첫 리뷰(5-1)마다:
@@ -323,7 +329,7 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 - 사유: 세 항 중 기여 최대 항 기준
   - CF → "〈내 1위 가게〉를 꼽은 사람들이 많이 꼽은 곳"
   - CB → "#〈일치 태그 1~2개〉 취향과 맞음"
-  - POP → "국캠 전체 〈n〉위". n은 순위 탭과 같은 기준(n_p ≥ 2 가게만, S̃ 내림차순)의 순위. n_p = 1이면 사유는 "신규 발견"
+  - POP → "국캠 전체 〈n〉위". n은 순위 탭과 같은 전체 순위(n_p ≥ 1, 공동 순위 포함)
 - 개수·조건
   | kind | 결과 수 | 조건 |
   |---|---|---|
@@ -438,7 +444,7 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 | lib/premium.ts | C | hasPremium(userId), buyPremium() |
 | app/ranking/page.tsx, components/FilterSheet.tsx | C | 순위 탭 |
 | components/PlaceDetail.tsx | C | 가게 상세 시트 |
-| components/KakaoMap.tsx | C | 지도(여유 있을 때) |
+| components/KakaoMap.tsx | C | 지도(여유 있을 때). SDK는 components/RecommendMap.tsx의 loadKakaoMapSdk() 사용 |
 | components/RecommendMap.tsx | B | 추천 가게 지도 |
 | components/EggHatch.tsx, components/EggHatch.module.css | B | 추천 탭 알 깨기 연출(§1 화면 3) |
 | public/brand/mechuri-mascot.svg | B | 메추리 캐릭터 그림 |
