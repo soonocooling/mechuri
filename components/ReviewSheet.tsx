@@ -5,6 +5,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { Category, ReviewSource, Tag } from '@/lib/types';
 import { getTags, groupTags } from '@/lib/tags';
 import { submitReview } from '@/lib/reviews';
+import { getReviewContext, previewPoints } from '@/lib/points';
 
 type ReviewSheetProps = {
   placeId: number;
@@ -22,6 +23,8 @@ export default function ReviewSheet({
   onDone,
 }: ReviewSheetProps) {
   const [tags, setTags] = useState<Tag[] | null>(null);
+  // 포인트 조건은 열 때 한 번만 받는다 (§5-5). 받기 전·비로그인은 0P로 보인다
+  const [ctx, setCtx] = useState({ isFirst: false, pioneer: false });
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
   const [busy, setBusy] = useState(false);
@@ -49,12 +52,14 @@ export default function ReviewSheet({
     } catch {}
   }
 
-  // 칩 목록은 열 때 한 번만 읽는다 (plan.md §6 시드 72행)
+  // 칩 목록(§6 시드 72행)과 포인트 조건(§5-5)을 열 때 한 번만, 같이 읽는다
   useEffect(() => {
     let alive = true;
-    getTags().then(
-      (all) => {
-        if (alive) setTags(all);
+    Promise.all([getTags(), getReviewContext(placeId)]).then(
+      ([all, reviewCtx]) => {
+        if (!alive) return;
+        setTags(all);
+        setCtx(reviewCtx);
       },
       () => {
         if (alive) setLoadError('칩을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.');
@@ -63,12 +68,18 @@ export default function ReviewSheet({
     return () => {
       alive = false;
     };
-  }, []);
+  }, [placeId]);
 
   // cuisine은 가게 대분류와 parentLabel이 같은 칩만 (기타면 전부, §6)
   const groups = useMemo(
     () => (tags ? groupTags(tags, placeCategory) : []),
     [tags, placeCategory]
+  );
+
+  // 칩을 누를 때마다 동기로 다시 계산한다 (DB 조회 없음, §5-5)
+  const earned = useMemo(
+    () => (tags ? previewPoints(selected, tags, ctx) : 0),
+    [selected, tags, ctx]
   );
 
   function toggle(tag: Tag, groupTagIds: number[], maxSelect: number) {
@@ -99,8 +110,8 @@ export default function ReviewSheet({
       try {
         navigator.vibrate?.(30);
       } catch {}
-      // TODO(B2): previewPoints로 계산한 적립 포인트를 넘긴다 (plan.md §5-5)
-      onDone(0);
+      // 화면에 보여준 값(제출 직전 previewPoints)을 그대로 넘긴다 (§5-5)
+      onDone(earned);
     } catch (e) {
       setError(e instanceof Error ? e.message : '리뷰를 저장하지 못했어요.');
     } finally {
@@ -126,8 +137,9 @@ export default function ReviewSheet({
         tabIndex={-1}
         className="pointer-events-none sr-only"
       />
-      {/* TODO(B2): "입력한 정보 N개 · +N P" — getReviewContext 1회 + previewPoints (plan.md §5-5) */}
-      <p className="text-sm text-gray-500">입력한 정보 {selected.length}개</p>
+      <p className="text-sm text-gray-500">
+        입력한 정보 {selected.length}개 · <span className="font-medium text-gray-700">+{earned}P</span>
+      </p>
 
       {loadError && <p className="text-sm text-red-600">{loadError}</p>}
       {!tags && !loadError && <p className="text-sm text-gray-500">불러오는 중…</p>}
