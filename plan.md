@@ -476,6 +476,7 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 | lib/recommend.ts | B | recommend(userId, kind, excludeIds?, context?), RecContext·MOOD_TAG_MAP(지금 상태 조건, §5-6) |
 | components/MoodPicker.tsx | B | 추천 탭 "지금 상태" 질문 4개(§1 화면 3) |
 | components/ReviewSheet.tsx | B | 칩 선택 시트 |
+| lib/useDragReorder.ts | B | useDragReorder({ count, onMove, disabled?, gap? }), moveItem(list, from, to) — 꾹 눌러 끌어서 순서 바꾸기. 내 맛집·온보딩 Top 3에서 사용(두 화면의 드래그 부분만 B, 순오 승인) |
 | app/recommend/page.tsx | B | 추천 탭 |
 | lib/ranking.ts | C | computeScores(allLists) |
 | lib/tagStats.ts | C | wilsonLB(k,n), computeTagStats(currentReviews, tags) |
