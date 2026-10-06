@@ -1,10 +1,11 @@
 'use client';
 // 담당 B — plan.md §10 추천 탭 (화면 3), §5-5, §5-6, §5-7, §7
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import type { Category, RecItem, RecKind } from '@/lib/types';
+import type { Category, Place, RecItem, RecKind } from '@/lib/types';
+import RecommendMap from '@/components/RecommendMap';
 import { useUser } from '@/lib/auth';
-import { getCurrentList } from '@/lib/lists';
+import { getAllCurrentLists, getCurrentList } from '@/lib/lists';
 import { getPlaces } from '@/lib/places';
 import { getPointBalance } from '@/lib/points';
 import { hasPremium } from '@/lib/premium';
@@ -22,10 +23,12 @@ type Shown = { placeId: number; name: string; category: Category | null; reason:
  * result = null이면 이번 주 free 기록 없음.
  * pointResult·premiumResult = null이면 아직 요청 안 함.
  * premiumExclude = 직전 프리미엄 5곳의 placeId. 페이지 상태라 새로고침하면 초기화 (§5-6)
+ * myPlaceIds = 내 현재 리스트 가게 (지도의 회색 점)
  */
 type Loaded = {
   userId: string;
   listCount: number;
+  myPlaceIds: number[];
   result: Shown[] | null;
   balance: number;
   premium: boolean;
@@ -80,6 +83,57 @@ function EmptyNote() {
   );
 }
 
+type MapItem = { placeId: number; reason: string; kind: RecKind };
+type MapData = {
+  recommended: { place: Place; reason: string; kind: RecKind; pickCount: number }[];
+  myPlaces: Place[];
+};
+
+/** 추천 결과 위 지도 (plan.md §1 화면 3). 실패해도 지도만 빠지고 추천 화면은 그대로 */
+function MapSection({ items, myPlaceIds }: { items: MapItem[]; myPlaceIds: number[] }) {
+  // 다시 불러오는 동안에는 직전 지도를 그대로 둔다
+  const [data, setData] = useState<MapData | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([getPlaces([...items.map((i) => i.placeId), ...myPlaceIds]), getAllCurrentLists()])
+      .then(([places, lists]) => {
+        // §5-2 n_p = 그 가게를 현재 리스트에 넣은 사용자 수
+        const pickCount = new Map<number, number>();
+        for (const list of lists.values()) {
+          for (const placeId of new Set(list.map((i) => i.placeId))) {
+            pickCount.set(placeId, (pickCount.get(placeId) ?? 0) + 1);
+          }
+        }
+        const recommended = items.flatMap((i) => {
+          const place = places.get(i.placeId);
+          return place
+            ? [{ place, reason: i.reason, kind: i.kind, pickCount: pickCount.get(i.placeId) ?? 0 }]
+            : [];
+        });
+        const myPlaces = myPlaceIds.flatMap((id) => places.get(id) ?? []);
+        if (active) {
+          setData({ recommended, myPlaces });
+          setFailed(false);
+        }
+      })
+      .catch((e: unknown) => {
+        console.error('[recommend map]', e);
+        if (active) setFailed(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [items, myPlaceIds]);
+
+  if (failed && !data) return null;
+  if (!data) {
+    return <div className="h-[260px] rounded-xl bg-gray-100 dark:bg-white/10" aria-hidden />;
+  }
+  return <RecommendMap recommended={data.recommended} myPlaces={data.myPlaces} />;
+}
+
 export default function RecommendPage() {
   const { user, loading } = useUser();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -87,6 +141,29 @@ export default function RecommendPage() {
   const [pending, setPending] = useState<RecKind | null>(null);
   const [error, setError] = useState<string | null>(null);
   const busy = pending !== null;
+
+  // 지도에 올릴 추천 가게: free → point → premium 순, 같은 가게는 처음 것만.
+  // 결과 state가 바뀔 때만 새 배열을 만들어 지도가 버튼 상태 변화로 다시 그려지지 않게 한다
+  const result = loaded?.result ?? null;
+  const pointResult = loaded?.pointResult ?? null;
+  const premiumResult = loaded?.premiumResult ?? null;
+  const mapItems = useMemo(() => {
+    const items: MapItem[] = [];
+    const seen = new Set<number>();
+    const groups: [RecKind, Shown[] | null][] = [
+      ['free', result],
+      ['point', pointResult],
+      ['premium', premiumResult],
+    ];
+    for (const [kind, shown] of groups) {
+      for (const r of shown ?? []) {
+        if (seen.has(r.placeId)) continue;
+        seen.add(r.placeId);
+        items.push({ placeId: r.placeId, reason: r.reason, kind });
+      }
+    }
+    return items;
+  }, [result, pointResult, premiumResult]);
 
   // 진입 시에는 이번 주 free 결과·잔액·프리미엄 여부를 읽기만 한다. recommend()는 버튼을 눌렀을 때만 (§5-6)
   const userId = user?.id;
@@ -105,6 +182,7 @@ export default function RecommendPage() {
           setLoaded({
             userId,
             listCount: list.length,
+            myPlaceIds: list.map((i) => i.placeId),
             result,
             balance,
             premium,
@@ -222,11 +300,14 @@ export default function RecommendPage() {
     );
   }
 
-  const { result, balance, premium, pointResult, premiumResult } = loaded;
+  const { balance, premium, myPlaceIds } = loaded;
   const hasResult = result !== null && result.length > 0;
 
   return (
     <div className="flex flex-col gap-4">
+      {/* 추천 결과(free·point·premium)가 1곳 이상이면 결과 위에 지도 */}
+      {mapItems.length > 0 && <MapSection items={mapItems} myPlaceIds={myPlaceIds} />}
+
       <h1 className="text-xl font-semibold">이번 주 추천 (무료 1곳)</h1>
 
       {hasResult ? (
