@@ -12,7 +12,7 @@ const TABS = [
 ];
 
 // 시작 화면(로그인·온보딩)에서는 탭을 숨긴다 (plan.md §1 화면 1)
-const HIDDEN = ['/login', '/onboarding'];
+const HIDDEN = ['/', '/login', '/onboarding'];
 
 export default function BottomTabs() {
   const pathname = usePathname();
