@@ -1,6 +1,7 @@
 'use client';
 // 담당 B — plan.md §10 추천 가게 지도, §1 화면 3, §5-2 n_p, §8 국캠 좌표, §9 NEXT_PUBLIC_KAKAO_MAP_KEY
 import { useEffect, useRef, useState } from 'react';
+import { Do_Hyeon } from 'next/font/google';
 import type { Place, RecKind } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
@@ -117,11 +118,15 @@ const CAMPUS = { lat: 37.382, lng: 126.669 };
 
 const KIND_LABEL: Record<RecKind, string> = { free: '무료', point: '3P', premium: '프리미엄' };
 
-/** 꼽은 사람 수(n_p) 3단계 — 주황~빨강 한 계열, 많을수록 진하게 */
+// plan.md §13 디자인 규칙 — 가게 이름·숫자는 Do Hyeon
+const display = Do_Hyeon({ weight: '400', subsets: ['latin'], fallback: ['system-ui', 'sans-serif'] });
+const INK = '#2A211B';
+
+/** 꼽은 사람 수(n_p) 3단계 — 주황~빨강 한 계열, 많을수록 진하게 (§13 지도 점) */
 const TIERS = [
-  { label: '1명', bg: '#fdba74', fg: '#7c2d12' },
-  { label: '2~3명', bg: '#f97316', fg: '#ffffff' },
-  { label: '4명 이상', bg: '#b91c1c', fg: '#ffffff' },
+  { label: '1명', bg: '#FFD3A1', fg: INK },
+  { label: '2~3명', bg: '#FF8A3D', fg: INK },
+  { label: '4명 이상', bg: '#D2301E', fg: '#ffffff' },
 ] as const;
 
 function tierOf(pickCount: number): (typeof TIERS)[number] {
@@ -131,8 +136,9 @@ function tierOf(pickCount: number): (typeof TIERS)[number] {
 }
 
 const DOT_SIZE = 28;
-const SELECTED_SHADOW = '0 0 0 3px rgba(0,0,0,0.85)';
-const DOT_SHADOW = '0 1px 3px rgba(0,0,0,0.35)';
+// 지도 위에서 점이 묻히지 않을 만큼만, 회색 대신 잉크색으로 옅게
+const SELECTED_SHADOW = `0 0 0 3px ${INK}`;
+const DOT_SHADOW = '0 1px 2px rgba(42,33,27,0.3)';
 
 function recDot(r: Recommended): HTMLButtonElement {
   const tier = tierOf(r.pickCount);
@@ -147,8 +153,9 @@ function recDot(r: Recommended): HTMLButtonElement {
     border: '2px solid #ffffff',
     background: tier.bg,
     color: tier.fg,
-    fontSize: '12px',
-    fontWeight: '700',
+    fontFamily: display.style.fontFamily,
+    fontSize: '14px',
+    fontWeight: '400',
     lineHeight: '1',
     display: 'flex',
     alignItems: 'center',
@@ -180,12 +187,12 @@ function campusLabel(): HTMLDivElement {
   Object.assign(el.style, {
     padding: '3px 8px',
     borderRadius: '9999px',
-    background: '#1e3a8a',
+    background: INK,
     color: '#ffffff',
-    fontSize: '11px',
-    fontWeight: '700',
+    fontFamily: display.style.fontFamily,
+    fontSize: '12px',
+    fontWeight: '400',
     whiteSpace: 'nowrap',
-    boxShadow: DOT_SHADOW,
   });
   return el;
 }
@@ -273,7 +280,7 @@ export default function RecommendMap({ recommended, myPlaces }: RecommendMapProp
 
   if (status === 'unavailable') {
     return (
-      <div className="flex h-[260px] items-center justify-center rounded-xl bg-gray-100 p-4 text-center text-sm text-gray-500 dark:bg-white/10 dark:text-gray-300">
+      <div className="flex h-[260px] items-center justify-center rounded-xl bg-[#F5F4F2] p-4 text-center text-sm text-[#8C6A4F] dark:bg-white/10 dark:text-[#C9AE95]">
         지도를 불러오지 못했어요. 아래 추천 목록은 그대로 볼 수 있어요.
       </div>
     );
@@ -282,19 +289,19 @@ export default function RecommendMap({ recommended, myPlaces }: RecommendMapProp
   const selected = recommended.find((r) => r.place.id === selectedId) ?? null;
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="relative h-[260px] overflow-hidden rounded-xl bg-gray-100 dark:bg-white/10">
+    <div className="flex flex-col gap-3">
+      <div className="relative h-[260px] overflow-hidden rounded-xl bg-[#F5F4F2] dark:bg-white/10">
         <div ref={containerRef} className="h-full w-full" />
         {status === 'loading' && (
-          <p className="absolute inset-0 flex items-center justify-center text-sm text-gray-500">
+          <p className="absolute inset-0 flex items-center justify-center text-sm text-[#8C6A4F] dark:text-[#C9AE95]">
             지도를 불러오는 중…
           </p>
         )}
       </div>
 
       {/* 범례: 색 3단계 = 꼽은 사람 수 */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
-        <span>꼽은 사람 수</span>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#8C6A4F] dark:text-[#C9AE95]">
+        <span className="font-bold">꼽은 사람 수</span>
         {TIERS.map((t) => (
           <span key={t.label} className="flex items-center gap-1">
             <span
@@ -305,43 +312,52 @@ export default function RecommendMap({ recommended, myPlaces }: RecommendMapProp
           </span>
         ))}
         <span className="flex items-center gap-1">
-          <span className="inline-block h-2.5 w-2.5 rounded-full border border-white bg-gray-400" />
+          <span className="inline-block h-2.5 w-2.5 rounded-full border border-white bg-[#9ca3af]" />
           내 맛집
         </span>
       </div>
 
+      {/* 선택한 가게: 카드로 감싸지 않고 구분선 아래 정보만 (§13 강조는 무료 추천 카드 한 곳) */}
       {selected ? (
-        <div className="flex flex-col gap-1 rounded-lg border border-gray-200 p-4 dark:border-white/15">
-          <div className="flex items-baseline gap-2">
-            <span className="text-lg font-semibold">{selected.place.name}</span>
-            <span className="text-sm text-gray-500">{selected.place.category}</span>
-            <span className="ml-auto shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-800 dark:bg-orange-500/20 dark:text-orange-200">
-              {KIND_LABEL[selected.kind]}
-            </span>
-          </div>
-          <p className="text-sm text-gray-500">{selected.place.address}</p>
-          <p className="text-sm">&ldquo;{selected.reason}&rdquo;</p>
-          <p className="text-sm font-medium">
-            {selected.pickCount > 0
-              ? `${selected.pickCount}명이 꼽은 곳`
-              : '아직 Top 리스트에 꼽은 사람이 없는 곳'}
-          </p>
-          <div className="mt-1 flex items-center justify-between">
-            <a
-              href={`https://place.map.kakao.com/${encodeURIComponent(selected.place.kakaoPlaceId)}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm font-medium text-blue-600 underline dark:text-blue-400"
+        <div className="flex flex-col gap-1.5 border-t border-[#E7E3DE] pt-3 dark:border-white/15">
+          <div className="flex items-start gap-2">
+            <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
+              <span className={`${display.className} text-xl`}>{selected.place.name}</span>
+              <span className="text-sm text-[#8C6A4F] dark:text-[#C9AE95]">
+                {selected.place.category} · {KIND_LABEL[selected.kind]} 추천
+              </span>
+            </div>
+            <button
+              type="button"
+              className="-mr-2 -mt-2 min-h-11 shrink-0 px-2 text-sm text-[#8C6A4F] dark:text-[#C9AE95]"
+              onClick={closeCard}
             >
-              카카오맵에서 보기
-            </a>
-            <button type="button" className="text-sm text-gray-500" onClick={closeCard}>
               닫기
             </button>
           </div>
+          <p className="text-sm text-[#8C6A4F] dark:text-[#C9AE95]">{selected.place.address}</p>
+          <p className="text-sm">&ldquo;{selected.reason}&rdquo;</p>
+          <p className="text-sm">
+            {selected.pickCount > 0 ? (
+              <>
+                <span className={`${display.className} text-base`}>{selected.pickCount}</span>명이
+                꼽은 곳
+              </>
+            ) : (
+              '아직 Top 리스트에 꼽은 사람이 없는 곳'
+            )}
+          </p>
+          <a
+            href={`https://place.map.kakao.com/${encodeURIComponent(selected.place.kakaoPlaceId)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-2 flex min-h-[52px] w-full items-center justify-center rounded-lg border border-[#E7E3DE] px-4 font-medium dark:border-white/20"
+          >
+            카카오맵에서 보기
+          </a>
         </div>
       ) : (
-        <p className="text-xs text-gray-500 dark:text-gray-400">점을 누르면 가게 정보를 볼 수 있어요.</p>
+        <p className="text-xs text-[#8C6A4F] dark:text-[#C9AE95]">점을 누르면 가게 정보를 볼 수 있어요.</p>
       )}
     </div>
   );

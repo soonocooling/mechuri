@@ -2,6 +2,7 @@
 // 담당 B — plan.md §10 칩 선택 시트
 // 제출은 lib/reviews.ts의 submitReview(= §4-1 submit_review RPC)를 부른다
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Do_Hyeon } from 'next/font/google';
 import type { Category, ReviewSource, Tag } from '@/lib/types';
 import { getTags, groupTags } from '@/lib/tags';
 import { submitReview } from '@/lib/reviews';
@@ -14,6 +15,11 @@ type ReviewSheetProps = {
   embedded?: boolean;              // 온보딩 화면 안에 끼울 때 true
   onDone: (earned: number) => void; // 제출 또는 건너뛰기 후 호출(건너뛰기면 0)
 };
+
+// plan.md §13 디자인 규칙 — 제목·숫자는 Do Hyeon, 본문은 시스템 글꼴
+const display = Do_Hyeon({ weight: '400', subsets: ['latin'], fallback: ['system-ui', 'sans-serif'] });
+const SYSTEM_FONT =
+  "system-ui, -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif";
 
 export default function ReviewSheet({
   placeId,
@@ -120,7 +126,10 @@ export default function ReviewSheet({
   }
 
   const body = (
-    <div className="flex flex-col gap-5">
+    <div
+      className="flex flex-col gap-7 text-[#2A211B] dark:text-[#F2ECE6]"
+      style={{ fontFamily: SYSTEM_FONT }}
+    >
       {/* iOS 햅틱용 — 화면·접근성 트리·포커스 순서에서 모두 뺀다 */}
       <input
         ref={hapticInputRef}
@@ -137,22 +146,32 @@ export default function ReviewSheet({
         tabIndex={-1}
         className="pointer-events-none sr-only"
       />
-      <p className="text-sm text-gray-500">
-        입력한 정보 {selected.length}개 · <span className="font-medium text-gray-700">+{earned}P</span>
-      </p>
+      {/* 개수 글자와 포인트 배지를 나눠 보여준다 */}
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-[#8C6A4F] dark:text-[#C9AE95]">
+          입력한 정보 <span className={`${display.className} text-base`}>{selected.length}</span>개
+        </p>
+        <span
+          className={`${display.className} rounded-full bg-[#FFB547] px-3 py-1 text-base leading-none text-[#2A211B]`}
+        >
+          +{earned} P
+        </span>
+      </div>
 
-      {loadError && <p className="text-sm text-red-600">{loadError}</p>}
-      {!tags && !loadError && <p className="text-sm text-gray-500">불러오는 중…</p>}
+      {loadError && <p className="text-sm text-[#D2301E]">{loadError}</p>}
+      {!tags && !loadError && (
+        <p className="text-sm text-[#8C6A4F] dark:text-[#C9AE95]">불러오는 중…</p>
+      )}
 
       {groups.map((group) => {
         const groupTagIds = group.tags.map((t) => t.id);
         const inGroup = selected.filter((id) => groupTagIds.includes(id));
         const full = inGroup.length >= group.maxSelect;
         return (
-          <section key={group.groupKey} className="flex flex-col gap-2">
-            <h2 className="text-sm font-semibold">
+          <section key={group.groupKey} className="flex flex-col gap-3">
+            <h2 className="text-sm font-bold">
               {group.groupLabel}
-              <span className="ml-2 font-normal text-gray-500">
+              <span className="ml-2 font-normal text-[#8C6A4F] dark:text-[#C9AE95]">
                 {group.groupKind === 'evaluative' || group.maxSelect === 1
                   ? '1개'
                   : `최대 ${group.maxSelect}개`}
@@ -171,8 +190,8 @@ export default function ReviewSheet({
                     disabled={blocked || busy}
                     className={`min-h-11 rounded-full border px-4 py-2.5 text-sm ${
                       on
-                        ? 'border-black bg-black font-medium text-white'
-                        : 'border-gray-300 text-gray-700'
+                        ? 'border-[#E8432E] bg-[#E8432E] font-medium text-white'
+                        : 'border-[#E7E3DE] dark:border-white/20'
                     } ${blocked ? 'opacity-30' : ''}`}
                     onClick={() => toggle(tag, groupTagIds, group.maxSelect)}
                   >
@@ -185,24 +204,25 @@ export default function ReviewSheet({
         );
       })}
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-[#D2301E]">{error}</p>}
 
-      <div className="flex gap-2 pt-1">
+      {/* 버튼은 가로 꽉 차게. 주 행동(제출)이 위, 건너뛰기는 아래 조용히 */}
+      <div className="flex flex-col gap-2 pt-1">
         <button
           type="button"
-          className="min-h-12 rounded-lg border border-gray-300 px-4 font-medium text-gray-600"
-          disabled={busy}
-          onClick={() => onDone(0)}
-        >
-          건너뛰기
-        </button>
-        <button
-          type="button"
-          className="min-h-12 flex-1 rounded-lg bg-black font-medium text-white disabled:opacity-40"
+          className="min-h-[52px] w-full rounded-lg bg-[#E8432E] px-4 font-medium text-white disabled:opacity-40"
           disabled={selected.length === 0 || busy}
           onClick={submit}
         >
           {busy ? '저장 중…' : '제출'}
+        </button>
+        <button
+          type="button"
+          className="min-h-[52px] w-full rounded-lg px-4 font-medium text-[#8C6A4F] dark:text-[#C9AE95]"
+          disabled={busy}
+          onClick={() => onDone(0)}
+        >
+          건너뛰기
         </button>
       </div>
     </div>
@@ -212,19 +232,21 @@ export default function ReviewSheet({
   if (embedded) return body;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#2A211B]/40">
       <div
         role="dialog"
         aria-modal="true"
         aria-label="어땠어?"
         className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-[var(--background)] px-4 pb-6 pt-4"
       >
-        <div className="mb-3 flex items-center justify-between">
-          <h1 className="text-lg font-semibold">어땠어?</h1>
+        <div className="mb-4 flex items-center justify-between">
+          <h1 className={`${display.className} text-2xl text-[#2A211B] dark:text-[#F2ECE6]`}>
+            어땠어?
+          </h1>
           <button
             type="button"
             aria-label="닫기"
-            className="min-h-11 px-2 text-xl text-gray-400"
+            className="min-h-11 px-2 text-xl text-[#8C6A4F] dark:text-[#C9AE95]"
             disabled={busy}
             onClick={() => onDone(0)}
           >
