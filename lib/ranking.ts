@@ -13,7 +13,7 @@ const M = 2;
  *  - score = S̃(p) = S(p) · n_p / (n_p + 2),  S(p) = Σ_u w(r_u(p))  (현재 리스트 기준)
  *  - n = p를 현재 리스트에 넣은 사용자 수, nFirst = p를 1위로 꼽은 사용자 수
  *  lists는 A의 getAllCurrentLists() 결과(key = userId, 값 = 그 사용자의 현재 리스트)를 그대로 넣는다.
- *  n = 1인 가게도 Map에 들어간다(“신규 발견” 표시용). 순위 노출 여부는 rankPlaces가 가른다. */
+ *  n = 1인 가게도 순위에 들어간다. */
 export function computeScores(
   lists: Map<string, ListItem[]>
 ): Map<number, { score: number; n: number; nFirst: number }> {
@@ -38,32 +38,33 @@ export function computeScores(
   return out;
 }
 
+/** S̃ 비교 허용 오차 (lib/recommend.ts와 같은 값). 이 안이면 같은 점수로 본다 */
+export const SCORE_EPS = 1e-9;
+
 export type RankedPlace = {
-  /** 전체 순위(1부터). 신규 발견은 null */
-  rank: number | null;
+  /** 전체 순위(1부터). S̃가 같으면(SCORE_EPS 안) 같은 숫자 — 1, 2, 3, 3, 5 … */
+  rank: number;
   place: Place;
   score: number;
   n: number;
   nFirst: number;
 };
 
-/** 정렬 규칙 (plan.md §5-2): S̃ ↓ → n ↓ → 1위 표 수 ↓ → 이름 ↑ */
+/** 정렬 규칙 (plan.md §5-2): S̃ ↓(SCORE_EPS 안은 같음) → n ↓ → 1위 표 수 ↓ → 이름 ↑ */
 export function compareRanked(a: Omit<RankedPlace, 'rank'>, b: Omit<RankedPlace, 'rank'>): number {
-  return (
-    b.score - a.score ||
-    b.n - a.n ||
-    b.nFirst - a.nFirst ||
-    a.place.name.localeCompare(b.place.name, 'ko')
-  );
+  const d = b.score - a.score;
+  if (Math.abs(d) > SCORE_EPS) return d;
+  return b.n - a.n || b.nFirst - a.nFirst || a.place.name.localeCompare(b.place.name, 'ko');
 }
 
-/** 점수 + 가게 정보 → { ranked: n ≥ 2 정렬·순위 매김, newcomers: n = 1 “신규 발견” }
+/** 점수 + 가게 정보 → 모든 가게(n ≥ 1)를 정렬하고 전체 순위를 매긴다.
+ *  S̃가 같은 가게는 같은 순위 숫자(공동 순위)이고, 그 안의 순서는 동점 규칙을 따른다.
  *  places는 A의 getPlaces() 결과. 정보가 없는 placeId는 건너뛴다.
  *  필터를 걸 때도 “전체 순위 번호”를 유지하려면 이 결과를 먼저 만들고 그다음에 거른다. */
 export function rankPlaces(
   scores: Map<number, { score: number; n: number; nFirst: number }>,
   places: Map<number, Place>
-): { ranked: RankedPlace[]; newcomers: RankedPlace[] } {
+): RankedPlace[] {
   const rows: Omit<RankedPlace, 'rank'>[] = [];
   for (const [placeId, s] of scores) {
     const place = places.get(placeId);
@@ -71,9 +72,25 @@ export function rankPlaces(
     rows.push({ place, ...s });
   }
   rows.sort(compareRanked);
-  const ranked = rows.filter((r) => r.n >= 2).map((r, i) => ({ ...r, rank: i + 1 }));
-  const newcomers = rows.filter((r) => r.n < 2).map((r) => ({ ...r, rank: null }));
-  return { ranked, newcomers };
+  const ranked: RankedPlace[] = [];
+  rows.forEach((r, i) => {
+    const prev = ranked[i - 1];
+    const rank = prev && prev.score - r.score <= SCORE_EPS ? prev.rank : i + 1;
+    ranked.push({ ...r, rank });
+  });
+  return ranked;
+}
+
+/** 순위 지도 색 단계 — 1이 가장 진함 */
+export type RankTier = 1 | 2 | 3 | 4;
+
+/** 전체 순위 r, 전체 가게 수 total → 선호도 상위 10% · 30% · 60% · 그 외.
+ *  공동 순위는 같은 r이라 같은 단계가 된다. 필터와 상관없이 전체 기준으로 부른다 */
+export function rankTier(rank: number, total: number): RankTier {
+  if (rank <= Math.max(1, Math.ceil(0.1 * total))) return 1;
+  if (rank <= Math.ceil(0.3 * total)) return 2;
+  if (rank <= Math.ceil(0.6 * total)) return 3;
+  return 4;
 }
 
 /** 필터 판정 (plan.md §5-4)
