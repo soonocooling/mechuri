@@ -38,6 +38,8 @@
 │ 분위기 [노포]          │
 │ 상황 [혼밥][해장]      │
 │ 청결 ○좋음 ●보통 ○아쉬움│
+│ [한마디 남기기 (선택)] │ [저장] 한마디 → reviews.body
+│              0/200    │
 │ [건너뛰기]   [다음 →]  │
 ├───────────────────────┤
 │ 완료! +9P 획득         │
@@ -64,6 +66,8 @@
 │ 12명이 꼽음 · 1위로 꼽은 사람 5명│
 │ #얼큰한 #진한 #혼밥     │
 │ 청결 ████░ 친절 ███░░  │
+│ 한마디                 │ ← 글 있는 현재 리뷰 최근 3개, 없으면 숨김
+│ 국물이 진해요 · 3일 전  │
 │ [간단 리뷰 남기기]      │ [저장] reviews, review_tags
 │ [내 맛집에 추가]        │ [저장] ranking_lists, ranking_items
 │ [카카오맵에서 보기]     │
@@ -112,7 +116,7 @@
 | ranking_lists | 내 맛집 리스트 저장 한 번 | 사용자 |
 | ranking_items | 저장된 리스트 속 가게 하나 | 사용자 |
 | tags | 선택 가능한 칩 하나 | schema.sql 시드(사용자 추가 불가) |
-| reviews | 가게 하나에 대한 태그 입력 제출 한 번 | 사용자 |
+| reviews | 가게 하나에 대한 태그 입력 제출 한 번 (+ 선택 한마디) | 사용자 |
 | review_tags | 제출에서 고른 칩 하나 | 사용자 |
 | recommendations | 추천 실행 한 번 | 사용자 |
 | subscriptions | 모의 결제 한 번 | 사용자 |
@@ -184,6 +188,7 @@
 | user_id | 글자(uuid) | |
 | place_id | 숫자 | → places.id |
 | source | 글자 | onboarding / review / list_add |
+| body | 글자 | 한마디(선택). null 허용, 값이 있으면 200자 이하 + 공백 아닌 글자 1개 이상 (check reviews_body_length). schema.sql에 포함, 기존 DB는 migrate_review_body.sql |
 | created_at | 시각 | |
 
 ### review_tags
@@ -241,7 +246,7 @@
 | 함수 | 인자 | 동작 | 반환 |
 |---|---|---|---|
 | save_list | p_place_ids bigint[], p_is_onboarding boolean | 개수 3~10·중복 검사 → ranking_lists 1줄 + ranking_items(배열 순서 = rank 1..n) | 새 list id |
-| submit_review | p_place_id bigint, p_tag_ids bigint[], p_source text | 태그 1개 이상·source 값 검사 → reviews 1줄 + review_tags | 새 review id |
+| submit_review | p_place_id bigint, p_tag_ids bigint[], p_source text, p_body text default null | 태그 1개 이상·source 값 검사 → reviews 1줄(body = p_body 앞뒤 공백 자름, 빈 문자열이면 null) + review_tags | 새 review id |
 
 호출: `supabase.rpc('save_list', { p_place_ids, p_is_onboarding })`. 그룹별 max_select·평가형 1개 검사는 앱(ReviewSheet)에서 한다.
 places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
@@ -253,6 +258,7 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 - 현재 리스트: 사용자별 created_at 최신 ranking_lists의 ranking_items
 - 현재 리뷰: (user_id, place_id)별 created_at 최신 reviews + 그 review_tags
 - 첫 리뷰: (user_id, place_id)별 created_at 최초 reviews (포인트 계산용)
+- 한마디: 그 가게의 사용자별 현재 리뷰 중 body가 있는 것, created_at 최신순. 가게 상세에 최근 3개(작성자 표시 없음). 포인트 없음
 - created_at이 같으면 id가 큰 쪽을 최신, 작은 쪽을 최초로 본다 (seed처럼 한 번에 넣은 행은 created_at이 같을 수 있음)
 
 ### 5-2. 순위 점수 (`lib/ranking.ts`)
@@ -436,7 +442,7 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 | app/my-list/page.tsx | A | 내 맛집 편집(저장 = 새 리스트) |
 | components/PlaceSearch.tsx | A | 검색창 + 결과 + 선택 |
 | lib/tags.ts | B | getTags(), 그룹 묶기, 타입 |
-| lib/reviews.ts | B | submitReview(placeId, tagIds, source), getCurrentReviews(), getFirstReviews() |
+| lib/reviews.ts | B | submitReview(placeId, tagIds, source, body?), getCurrentReviews(), getFirstReviews(), getRecentReviewBodies(placeId, limit = 3) |
 | lib/points.ts | B | getPointBalance(userId), getReviewContext(placeId), previewPoints(tagIds, tags, ctx) |
 | lib/recommend.ts | B | recommend(userId, kind, excludeIds?, context?), RecContext·MOOD_TAG_MAP(지금 상태 조건, §5-6) |
 | components/MoodPicker.tsx | B | 추천 탭 "지금 상태" 질문 4개(§1 화면 3) |
@@ -446,7 +452,7 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 | lib/tagStats.ts | C | wilsonLB(k,n), computeTagStats(currentReviews, tags) |
 | lib/premium.ts | C | hasPremium(userId), buyPremium() |
 | app/ranking/page.tsx, components/FilterSheet.tsx | C | 순위 탭 |
-| components/PlaceDetail.tsx | C | 가게 상세 시트 |
+| components/PlaceDetail.tsx | C | 가게 상세 시트. '한마디' 구역만 B(팀 합의) |
 | components/KakaoMap.tsx | C | 지도(여유 있을 때). SDK는 components/RecommendMap.tsx의 loadKakaoMapSdk() 사용 |
 | components/RecommendMap.tsx | B | 추천 가게 지도 |
 | components/EggHatch.tsx, components/EggHatch.module.css | B | 추천 탭 알 깨기 연출(§1 화면 3) |
@@ -468,7 +474,7 @@ export type Tag = { id: number; groupKey: string; groupLabel: string;
   groupKind: 'descriptive' | 'evaluative'; maxSelect: number; label: string;
   parentLabel: string | null; value: number | null; sort: number };
 export type CurrentReview = { reviewId: number; userId: string; placeId: number;
-  tagIds: number[]; createdAt: string };
+  tagIds: number[]; createdAt: string; body?: string | null };
 export type ReviewSource = 'onboarding' | 'review' | 'list_add';
 export type RecKind = 'free' | 'point' | 'premium';
 export type RecItem = { placeId: number; reason: string };
@@ -504,9 +510,11 @@ type ReviewSheetProps = {
 getTags(): Promise<Tag[]>
 
 // B — lib/reviews.ts
-submitReview(placeId: number, tagIds: number[], source: ReviewSource): Promise<number> // rpc submit_review
+submitReview(placeId: number, tagIds: number[], source: ReviewSource, body?: string): Promise<number> // rpc submit_review, 글이 있을 때만 p_body
 getCurrentReviews(): Promise<CurrentReview[]>
 getFirstReviews(): Promise<CurrentReview[]>
+getRecentReviewBodies(placeId: number, limit = 3):
+  Promise<{ reviewId: number; body: string; createdAt: string }[]>  // 에러면 [] + console.error
 
 // B — lib/points.ts
 getPointBalance(userId: string): Promise<number>
