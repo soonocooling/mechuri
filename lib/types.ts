@@ -16,7 +16,7 @@ export type Tag = { id: number; groupKey: string; groupLabel: string;
   parentLabel: string | null; value: number | null; sort: number };
 
 export type CurrentReview = { reviewId: number; userId: string; placeId: number;
-  tagIds: number[]; createdAt: string };
+  tagIds: number[]; createdAt: string; body?: string | null };
 
 export type ReviewSource = 'onboarding' | 'review' | 'list_add';
 
