@@ -33,12 +33,53 @@ export async function submitReview(
   return data as number;
 }
 
-/** 뼈대: 더미값. (user_id, place_id)별 created_at 최신 reviews (plan.md §5-1) */
-export async function getCurrentReviews(): Promise<CurrentReview[]> {
-  return [];
+type ReviewRow = {
+  id: number;
+  user_id: string;
+  place_id: number;
+  created_at: string;
+  review_tags: { tag_id: number }[];
+};
+
+const REVIEW_COLUMNS = 'id, user_id, place_id, created_at, review_tags(tag_id)';
+
+/** reviews 전체 + review_tags. created_at이 같으면 id로 순서를 정한다 (plan.md §5-1) */
+async function getReviewRows(ascending: boolean): Promise<ReviewRow[]> {
+  const { data, error } = await supabase
+    .from('reviews')
+    .select(REVIEW_COLUMNS)
+    .order('created_at', { ascending })
+    .order('id', { ascending })
+    .returns<ReviewRow[]>();
+  if (error) throw new Error(error.message);
+  return data;
 }
 
-/** 뼈대: 더미값. (user_id, place_id)별 created_at 최초 reviews (포인트 계산용) */
+/** 정렬된 rows에서 (user_id, place_id)별 첫 줄만 남긴다 */
+function firstPerUserPlace(rows: ReviewRow[]): CurrentReview[] {
+  const seen = new Set<string>();
+  const reviews: CurrentReview[] = [];
+  for (const r of rows) {
+    const key = `${r.user_id}:${r.place_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    reviews.push({
+      reviewId: r.id,
+      userId: r.user_id,
+      placeId: r.place_id,
+      tagIds: r.review_tags.map((t) => t.tag_id).sort((a, b) => a - b),
+      createdAt: r.created_at,
+    });
+  }
+  return reviews;
+}
+
+/** (user_id, place_id)별 created_at 최신 reviews + 그 review_tags (plan.md §5-1). 같으면 id 큰 쪽 */
+export async function getCurrentReviews(): Promise<CurrentReview[]> {
+  return firstPerUserPlace(await getReviewRows(false));
+}
+
+/** (user_id, place_id)별 created_at 최초 reviews (포인트 계산용). 같으면 id 작은 쪽 */
 export async function getFirstReviews(): Promise<CurrentReview[]> {
-  return [];
+  return firstPerUserPlace(await getReviewRows(true));
 }
