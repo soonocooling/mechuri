@@ -2,13 +2,15 @@
 // 담당 C — plan.md §10 가게 상세 시트 (화면 2)
 // 데이터는 순위 탭이 이미 불러온 것(RankingView)을 받아 쓴다 → 상세를 열 때 DB를 다시 읽지 않는다.
 // 리뷰·리스트 저장 후에는 onChanged로 순위 탭에 다시 불러오라고 알린다.
-import { useState } from 'react';
+// '한마디' 구역은 B 작업(팀 합의, plan.md §10) — 상세를 열 때 getRecentReviewBodies로 따로 읽는다.
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { CurrentReview, Place, ReviewSource, Tag } from '@/lib/types';
 import { SCORE_EPS, type RankedPlace } from '@/lib/ranking';
 import { breakdownForPlace } from '@/lib/tagStats';
 import { useUser } from '@/lib/auth';
 import { getCurrentList, saveList } from '@/lib/lists';
+import { getRecentReviewBodies } from '@/lib/reviews';
 import ReviewSheet from '@/components/ReviewSheet';
 
 /** 순위 탭이 한 번 불러와 계산해 둔 것 */
@@ -33,6 +35,22 @@ const MAX_LIST = 10;
 /** 평가형 분포 막대는 응답 3개 이상일 때만 (기획서 F-19) */
 const MIN_EVAL_RESPONSES = 3;
 
+type RecentBody = Awaited<ReturnType<typeof getRecentReviewBodies>>[number];
+
+/** "방금", "5분 전", "3시간 전", "3일 전", "2개월 전", "1년 전" */
+function timeAgo(iso: string): string {
+  const sec = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (sec < 60) return '방금';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}분 전`;
+  const hour = Math.floor(min / 60);
+  if (hour < 24) return `${hour}시간 전`;
+  const day = Math.floor(hour / 24);
+  if (day < 30) return `${day}일 전`;
+  if (day < 365) return `${Math.floor(day / 30)}개월 전`;
+  return `${Math.floor(day / 365)}년 전`;
+}
+
 export default function PlaceDetail({ placeId, view, onClose, onChanged }: PlaceDetailProps) {
   const router = useRouter();
   const { user } = useUser();
@@ -40,6 +58,19 @@ export default function PlaceDetail({ placeId, view, onClose, onChanged }: Place
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 한마디 최근 3개. 리뷰를 제출하면 bodiesKey를 올려 다시 읽는다
+  const [bodies, setBodies] = useState<RecentBody[]>([]);
+  const [bodiesKey, setBodiesKey] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    getRecentReviewBodies(placeId).then((b) => {
+      if (active) setBodies(b);
+    });
+    return () => {
+      active = false;
+    };
+  }, [placeId, bodiesKey]);
 
   const place = view.places.get(placeId);
   if (!place) return null;
@@ -110,6 +141,7 @@ export default function PlaceDetail({ placeId, view, onClose, onChanged }: Place
   function reviewDone(earned: number) {
     setReviewing(null);
     setNotice(earned > 0 ? `리뷰 고마워요! +${earned}P` : null);
+    setBodiesKey((k) => k + 1);
     onChanged();
   }
 
@@ -227,6 +259,21 @@ export default function PlaceDetail({ placeId, view, onClose, onChanged }: Place
             </div>
 
             <p className="text-xs text-gray-500">{place.address}</p>
+
+            {/* 한마디: 사용자별 현재 리뷰 중 글이 있는 것 최근 3개, 작성자 표시 없음. 없으면 구역째 숨김 */}
+            {bodies.length > 0 && (
+              <section className="flex flex-col gap-2 text-[#2A211B]">
+                <h3 className="text-sm font-bold">한마디</h3>
+                <ul className="flex flex-col gap-2">
+                  {bodies.map((b) => (
+                    <li key={b.reviewId} className="flex flex-col gap-0.5">
+                      <p className="whitespace-pre-line break-words text-sm">{b.body}</p>
+                      <span className="text-xs text-[#7A5B43]">{timeAgo(b.createdAt)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
 
             {notice && <p className="text-sm text-green-700">{notice}</p>}
             {error && <p className="text-sm text-red-600">{error}</p>}

@@ -59,6 +59,8 @@
 │ 분위기 [노포]          │
 │ 상황 [혼밥][해장]      │
 │ 청결 ○좋음 ●보통 ○아쉬움│
+│ [한마디 남기기 (선택)] │ [저장] 한마디 → reviews.body
+│              0/200    │
 │ [건너뛰기]   [다음 →]  │
 ├───────────────────────┤
 │ 완료! +9P 획득         │
@@ -93,6 +95,8 @@
 │ 12명이 꼽음 · 1위로 꼽은 사람 5명│
 │ #얼큰한 #진한 #혼밥     │
 │ 청결 ████░ 친절 ███░░  │
+│ 한마디                 │ ← 글 있는 현재 리뷰 최근 3개, 없으면 숨김
+│ 국물이 진해요 · 3일 전  │
 │ [간단 리뷰 남기기]      │ [저장] reviews, review_tags
 │ [내 맛집에 추가]        │ [저장] ranking_lists, ranking_items
 │ [카카오맵에서 보기]     │
@@ -107,6 +111,11 @@
 │ "○○국밥을 꼽은 사람들이 │
 │  많이 꼽은 곳"          │
 │ 다음 알은 내일 아침 6시 │
+│ 다음 추천 조건 (MoodPicker)│ ← 무료 알 받기 전엔 [추천 받기] 버튼 바로 위
+│  땡기는 거 [중식][매운]…→│   무료·포인트: 1개 / 프리미엄: 최대 3개
+│  배 상태 🔒[출출해요]…  │ ┐
+│  누구랑   🔒[혼자][둘이]…│ │ 무료·포인트: 잠금 칩(누르면 /premium)
+│  예산·시간 🔒[가볍게]…  │ ┘ 프리미엄: 모두 선택
 │ [3P로 한 번 더] 잔액 9P │ [저장] recommendations(kind=point)
 │ [프리미엄: 무제한 5곳]  │
 └───────────────────────┘
@@ -119,6 +128,11 @@
 │ 베타 기간 실제 결제 없음│
 └───────────────────────┘
 ```
+- "지금 상태" 조건(`components/MoodPicker.tsx`, 점수 규칙은 §5-6): 질문 4개, 모두 선택 사항(아무것도 안 고르면 지금과 같은 추천)
+  - 땡기는 거: 대분류(기타 제외 11종) + 맛(taste) 칩 / 배 상태: 출출해요 · 배고파요(기본, 영향 없음) · 엄청 배고파요 / 누구랑: 혼자 · 둘이 · 여럿 · 술자리 / 예산·시간: 가볍게 · 보통 · 제대로 + "바로 먹고 싶어요" 토글
+  - 무료·포인트(hasPremium false): 땡기는 거만 1개. 나머지 세 질문은 잠금 칩으로 보이고 누르면 /premium. 프리미엄: 네 질문 모두, 땡기는 거 최대 3개
+  - 자리: 오늘 무료 알을 받기 전엔 시작 화면 "오늘의 {끼니} 메뉴 추천 받기" 버튼 바로 위. 받은 뒤엔 "포인트로 한 곳 더"·"프리미엄 5곳" 위에 "다음 추천 조건" 제목과 함께. 고른 상태는 페이지 상태 하나(새로고침하면 초기화)
+  - 모양: 바탕 #F3EFE8 모서리 14px, 질문마다 칩 한 줄(가로 스크롤), 칩 높이 44px 이상. 선택 #003876 채움 흰 글자, 미선택 흰 바탕 #998878 테두리, 잠금 칩은 #F3EFE8 바탕 + 자물쇠 선 아이콘 + "프리미엄" 작은 글자
 - 추천 결과 위에 지도: 추천 가게 점은 꼽은 사람 수(n_p)가 많을수록 진한 한 가지 색(1명 / 2~3명 / 4명 이상 3단계), 내 리스트 가게는 회색 점, 국캠 위치 표시
 - 알 깨기 연출(`components/EggHatch.tsx`, 추천 버튼을 눌렀을 때만, 동작 줄이기 설정이면 생략하고 버튼에 "메추리가 {끼니} 알을 낳고 있어요…"): 오늘 무료 추천 전엔 맨 위 영역만 시작 화면(메추리 + 문구 + 추천 받기)이고 3P·프리미엄 영역은 그대로 보임 → 흰 연출 층에서 메추리가 들썩임(0.7초×2, recommend() 동시 호출, 늦으면 반복) → 알이 떨어져 튐(1초) → 금 3번 + 떨림(2초) → 윗껍데기가 오른쪽으로 경첩처럼 열린 뒤 아랫껍데기와 함께 아래로 떨어지고, 메추리·문구는 위로 빠지며, 페이지가 금 위치의 알 폭 틈에서 둥글게 열린 뒤 화면 전체로 clip-path로 벌어짐(1.6초), 0곳이면 흔들리기만 하고 "이번 알은 비어 있었어요…" 후 닫힘, 에러면 바로 닫힘. 3P·프리미엄은 짧은 버전(금 1번, 약 3초)
 - 시간대 문구(한국 시간 Intl `Asia/Seoul`): 6~11시 아침, 11~17시 점심, 17~22시 저녁, 22~6시 야식 → 시작 "메추리가 낳은 알에 오늘의 {끼니} 메뉴가 들어 있어요", 들썩임·낙하 "메추리가 {끼니} 알을 낳고 있어요…", 금 "톡, 톡… 알에 금이 가고 있어요", 시작 화면 버튼 "오늘의 {끼니} 메뉴 추천 받기", 결과 제목 "오늘의 메뉴 추천"(끼니 없음) 아래 무료 추천 카드 바로 위 "오늘 {끼니}으로 어때요?"(볼 때의 시간대), 카드 아래 "다음 알은 내일 아침 6시에 나와요"(새벽 0~6시엔 "오늘 아침 6시")
@@ -131,7 +145,7 @@
 | ranking_lists | 내 맛집 리스트 저장 한 번 | 사용자 |
 | ranking_items | 저장된 리스트 속 가게 하나 | 사용자 |
 | tags | 선택 가능한 칩 하나 | schema.sql 시드(사용자 추가 불가) |
-| reviews | 가게 하나에 대한 태그 입력 제출 한 번 | 사용자 |
+| reviews | 가게 하나에 대한 태그 입력 제출 한 번 (+ 선택 한마디) | 사용자 |
 | review_tags | 제출에서 고른 칩 하나 | 사용자 |
 | recommendations | 추천 실행 한 번 | 사용자 |
 | subscriptions | 모의 결제 한 번 | 사용자 |
@@ -203,6 +217,7 @@
 | user_id | 글자(uuid) | |
 | place_id | 숫자 | → places.id |
 | source | 글자 | onboarding / review / list_add |
+| body | 글자 | 한마디(선택). null 허용, 값이 있으면 200자 이하 + 공백 아닌 글자 1개 이상 (check reviews_body_length). schema.sql에 포함, 기존 DB는 migrate_review_body.sql |
 | created_at | 시각 | |
 
 ### review_tags
@@ -260,7 +275,7 @@
 | 함수 | 인자 | 동작 | 반환 |
 |---|---|---|---|
 | save_list | p_place_ids bigint[], p_is_onboarding boolean | 개수 3~10·중복 검사 → ranking_lists 1줄 + ranking_items(배열 순서 = rank 1..n) | 새 list id |
-| submit_review | p_place_id bigint, p_tag_ids bigint[], p_source text | 태그 1개 이상·source 값 검사 → reviews 1줄 + review_tags | 새 review id |
+| submit_review | p_place_id bigint, p_tag_ids bigint[], p_source text, p_body text default null | 태그 1개 이상·source 값 검사 → reviews 1줄(body = p_body 앞뒤 공백 자름, 빈 문자열이면 null) + review_tags | 새 review id |
 
 호출: `supabase.rpc('save_list', { p_place_ids, p_is_onboarding })`. 그룹별 max_select·평가형 1개 검사는 앱(ReviewSheet)에서 한다.
 places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
@@ -272,6 +287,7 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 - 현재 리스트: 사용자별 created_at 최신 ranking_lists의 ranking_items
 - 현재 리뷰: (user_id, place_id)별 created_at 최신 reviews + 그 review_tags
 - 첫 리뷰: (user_id, place_id)별 created_at 최초 reviews (포인트 계산용)
+- 한마디: 그 가게의 사용자별 현재 리뷰 중 body가 있는 것, created_at 최신순. 가게 상세에 최근 3개(작성자 표시 없음). 포인트 없음
 - created_at이 같으면 id가 큰 쪽을 최신, 작은 쪽을 최초로 본다 (seed처럼 한 번에 넣은 행은 created_at이 같을 수 있음)
 
 ### 5-2. 순위 점수 (`lib/ranking.ts`)
@@ -344,6 +360,27 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 - 반복 방지: free·point 추천은 최근 7일(지금 − 7×24시간~) 안에 내가 받은 free·point 추천 가게를 후보에서 제외. 제외 후 후보가 0곳이면 이 제외만 풀고 다시 고른다 (빈 알보다 반복이 낫다)
 - premium은 최근 기록을 빼지 않고 excludeIds만 제외
 - `recommend()`가 던지는 에러는 사용자용 한국어 문구(`lib/recommend.ts`에서 상수로 export). 화면은 받은 메시지를 그대로 표시한다
+
+#### 지금 상태 조건 (`recommend()`의 선택 인자 context, 화면은 §1 화면 3 MoodPicker)
+- context 타입(`RecContext`)과 질문 선택지 → 태그 연결표(`MOOD_TAG_MAP`)는 `lib/recommend.ts` 한 곳에 둔다. 연결은 tags의 (group_key, label)로 찾고, 맞는 태그가 하나도 없는 선택지는 화면에서 빼고 계산에서도 무시한다
+  | 질문 | 선택지 | 연결 |
+  |---|---|---|
+  | 땡기는 거 | 대분류 11종(기타 제외) | 후보 제한(아래) |
+  | 땡기는 거 | 맛 칩 | taste 그 label |
+  | 배 상태 | 출출해요 | portion '적음'·'보통' + 대분류 분식·카페·디저트 |
+  | 배 상태 | 배고파요(기본) | 없음(조건 아님) |
+  | 배 상태 | 엄청 배고파요 | portion '푸짐' + value '좋음' |
+  | 누구랑 | 혼자 / 둘이 / 여럿 / 술자리 | situation '혼밥' / '밥약' / '단체·회식' / '술자리' |
+  | 예산·시간 | 가볍게 / 보통 / 제대로 | price sort 1·2·3 ('1인 1만 원 이하' / '1~2만 원' / '2만 원 이상') |
+  | 예산·시간 | 바로 먹고 싶어요(토글) | wait '바로 입장' |
+- 무료·유료 선: hasPremium = false면 땡기는 거 1개만 쓴다(대분류 우선, 없으면 맛). 넘치게 들어오면 `recommend()`가 잘라낸다. 프리미엄은 네 질문 모두, 땡기는 거 최대 3개(넘치면 앞 3개)
+- 대분류 제한: 땡기는 거에 대분류가 있으면 그 대분류(여러 개면 OR) 가게만 후보. 순서는 대분류 안에서 7일 반복 제외 → 0곳이면 반복 제외만 풀기 → 그래도 0곳이면 대분류 제한만 풀고 결과에 안내 "조건에 딱 맞는 곳이 없어 가까운 곳을 골랐어요"(결과 배열의 `notice`, 저장하지 않음)
+- 요청 태그 집합 T = 땡기는 거의 맛 칩 + 배 상태 + 누구랑 + 예산·시간 연결(대분류 제한은 T에 넣지 않는다, 출출해요의 분식·카페·디저트는 T 원소)
+- ctx(p) = (p에 붙은 T 원소 수) / |T|. |T| = 0이면 0
+  - 서술형 칩: §5-3 부여(LB ≥ 0.30) / 평가형 칩: 그 칩 응답의 LB(k = 그 칩 응답 수, n = 그 그룹 응답 수) ≥ 0.40 (+1 칩이면 §5-3 긍정 통과와 같음) / 대분류 원소: places.category 일치
+- 조건이 하나라도 있으면(배고파요만 고른 것은 조건 없음) 최종 점수 = 0.6 × score + 0.4 × ctx. 없으면 score 그대로. 동점 규칙은 같다
+- 사유: ctx(p) > 0이면 맞은 T 원소 1~2개(질문 순서: 땡기는 거 → 배 상태 → 누구랑 → 예산·시간)로 "#〈태그〉 · #〈태그〉에 딱 맞는 곳"이 세 항 사유보다 먼저. 평가형은 "양 푸짐"처럼 그룹 이름을 붙인다. ctx = 0이면 기존 사유
+- 오늘 free 기록이 있으면 조건을 무시하고 그 결과를 재사용한다. 조건은 새로 계산할 때만(free 첫 추천·point·premium) 반영
 
 ### 5-7. 프리미엄 (`lib/premium.ts`)
 - hasPremium(userId) = 본인 subscriptions 중 period_end > now() 가 하나라도 있음
@@ -434,16 +471,17 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 | app/my-list/page.tsx | A | 내 맛집 편집(저장 = 새 리스트) |
 | components/PlaceSearch.tsx | A | 검색창 + 결과 + 선택 |
 | lib/tags.ts | B | getTags(), 그룹 묶기, 타입 |
-| lib/reviews.ts | B | submitReview(placeId, tagIds, source), getCurrentReviews(), getFirstReviews() |
+| lib/reviews.ts | B | submitReview(placeId, tagIds, source, body?), getCurrentReviews(), getFirstReviews(), getRecentReviewBodies(placeId, limit = 3) |
 | lib/points.ts | B | getPointBalance(userId), getReviewContext(placeId), previewPoints(tagIds, tags, ctx) |
-| lib/recommend.ts | B | recommend(userId, kind, excludeIds?) |
+| lib/recommend.ts | B | recommend(userId, kind, excludeIds?, context?), RecContext·MOOD_TAG_MAP(지금 상태 조건, §5-6) |
+| components/MoodPicker.tsx | B | 추천 탭 "지금 상태" 질문 4개(§1 화면 3) |
 | components/ReviewSheet.tsx | B | 칩 선택 시트 |
 | app/recommend/page.tsx | B | 추천 탭 |
 | lib/ranking.ts | C | computeScores(allLists) |
 | lib/tagStats.ts | C | wilsonLB(k,n), computeTagStats(currentReviews, tags) |
 | lib/premium.ts | C | hasPremium(userId), buyPremium() |
 | app/ranking/page.tsx, components/FilterSheet.tsx | C | 순위 탭 |
-| components/PlaceDetail.tsx | C | 가게 상세 시트 |
+| components/PlaceDetail.tsx | C | 가게 상세 시트. '한마디' 구역만 B(팀 합의) |
 | components/KakaoMap.tsx | C | 지도(여유 있을 때). SDK는 components/RecommendMap.tsx의 loadKakaoMapSdk() 사용 |
 | components/RecommendMap.tsx | B | 추천 가게 지도 |
 | components/EggHatch.tsx, components/EggHatch.module.css | B | 추천 탭 알 깨기 연출(§1 화면 3) |
@@ -466,7 +504,7 @@ export type Tag = { id: number; groupKey: string; groupLabel: string;
   groupKind: 'descriptive' | 'evaluative'; maxSelect: number; label: string;
   parentLabel: string | null; value: number | null; sort: number };
 export type CurrentReview = { reviewId: number; userId: string; placeId: number;
-  tagIds: number[]; createdAt: string };
+  tagIds: number[]; createdAt: string; body?: string | null };
 export type ReviewSource = 'onboarding' | 'review' | 'list_add';
 export type RecKind = 'free' | 'point' | 'premium';
 export type RecItem = { placeId: number; reason: string };
@@ -502,9 +540,11 @@ type ReviewSheetProps = {
 getTags(): Promise<Tag[]>
 
 // B — lib/reviews.ts
-submitReview(placeId: number, tagIds: number[], source: ReviewSource): Promise<number> // rpc submit_review
+submitReview(placeId: number, tagIds: number[], source: ReviewSource, body?: string): Promise<number> // rpc submit_review, 글이 있을 때만 p_body
 getCurrentReviews(): Promise<CurrentReview[]>
 getFirstReviews(): Promise<CurrentReview[]>
+getRecentReviewBodies(placeId: number, limit = 3):
+  Promise<{ reviewId: number; body: string; createdAt: string }[]>  // 에러면 [] + console.error
 
 // B — lib/points.ts
 getPointBalance(userId: string): Promise<number>
@@ -512,7 +552,15 @@ getReviewContext(placeId: number): Promise<{ isFirst: boolean; pioneer: boolean 
 previewPoints(tagIds: number[], tags: Tag[], ctx: { isFirst: boolean; pioneer: boolean }): number
 
 // B — lib/recommend.ts
-recommend(userId: string, kind: RecKind, excludeIds?: number[]): Promise<RecItem[]>
+recommend(userId: string, kind: RecKind, excludeIds?: number[], context?: RecContext):
+  Promise<RecItem[] & { notice?: string }>   // RecContext는 lib/recommend.ts에 정의(lib/types.ts 아님). notice = 대분류 제한 완화 안내
+
+// B — components/MoodPicker.tsx
+type MoodPickerProps = {
+  value: RecContext; onChange: (next: RecContext) => void;
+  tags: Tag[]; premium: boolean;    // premium = hasPremium 결과
+  disabled?: boolean;
+};
 
 // C — lib/ranking.ts
 computeScores(lists: Map<string, ListItem[]>):
@@ -536,7 +584,7 @@ buyPremium(): Promise<void>
 ## 12. 해커톤에서 뺀 것·바꾼 것 (기획서 대비)
 Claude Code가 기획서를 보고 아래 항목을 구현하지 않도록 전부 적는다.
 
-**뺀 것**: 배달 기능 전부, 학교 인증, 관리자 페이지·검수 큐·제보, 대표 메뉴·메추리 픽, 세부 조건 추천(유료 후속), 구독 해지, 포인트 주간 한도·회수·소멸, 폐업 처리, IP 가입 제한, 로그인 실패 잠금, 비밀번호 재발급, 저장·리뷰·추천 빈도 제한, 리뷰·리스트 삭제, Region(지역) 테이블·서비스 지역 밖 차단, 초기 음식점 일괄 수집, 소분류 자동 분류·관리자 보정, 태그 그룹 관리자 편집, 취향 분석(F-14, 여유 시), 필터 상태 URL 쿼리, PWA, 추천 API 서버 차단(403)
+**뺀 것**: 배달 기능 전부, 학교 인증, 관리자 페이지·검수 큐·제보, 대표 메뉴·메추리 픽, 구독 해지, 포인트 주간 한도·회수·소멸, 폐업 처리, IP 가입 제한, 로그인 실패 잠금, 비밀번호 재발급, 저장·리뷰·추천 빈도 제한, 리뷰·리스트 삭제, Region(지역) 테이블·서비스 지역 밖 차단, 초기 음식점 일괄 수집, 소분류 자동 분류·관리자 보정, 태그 그룹 관리자 편집, 취향 분석(F-14, 여유 시), 필터 상태 URL 쿼리, PWA, 추천 API 서버 차단(403)
 
 | 기획서 | plan.md (해커톤) | 이유 |
 |---|---|---|
@@ -548,6 +596,7 @@ Claude Code가 기획서를 보고 아래 항목을 구현하지 않도록 전�
 | CB = 0.40 소분류 ‖ 0.25 맛 ‖ 0.15 분위기 ‖ 0.20 상황 | §5-6 (대분류 원핫 추가, cuisine 칩 사용) | 소분류 자동 분류가 없음 |
 | Subscription 상태·PaymentProvider | subscriptions 결제 1회 = 1줄, period_end > now() | 모의 결제만 |
 | 개척: 그 가게 리뷰 < 3건 | 그 가게 첫 리뷰 남긴 다른 사용자 < 3 | 추가만 구조에서 같은 의미 |
+| 세부 조건 추천(유료 후속) | 지금 상태 추천으로 구현: 무료 1개 조건, 프리미엄 전체 (§5-6, §1 화면 3) | 팀 합의로 되살림 |
 | 무료 추천 주 1회 | 하루 1회(06:00 KST 경계) + 최근 7일 free·point 가게 제외(후보 0곳이면 제외 해제) | "지금 먹을 걸 골라주기" 컨셉 |
 
 ## 13. 디자인 규칙

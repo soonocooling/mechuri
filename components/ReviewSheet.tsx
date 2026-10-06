@@ -29,6 +29,11 @@ const ON_CLASS = 'border-[#003876] bg-[#003876] font-medium text-white';
 const OFF_CLASS = 'border-[#998878] bg-white text-[#2A211B]';
 const SUB_TEXT = 'text-[#7A5B43]';
 
+// 한마디 (plan.md §3 reviews.body) — 200자, 한 줄로 시작해 3줄까지 늘어난다 (16px × 줄 높이 24px)
+const BODY_MAX = 200;
+const BODY_MAX_LINES = 3;
+const BODY_LINE_PX = 24;
+
 export default function ReviewSheet({
   placeId,
   placeCategory,
@@ -46,6 +51,26 @@ export default function ReviewSheet({
   // "더 알려주기" 접힘 영역 — 기본은 접힘
   const [moreOpen, setMoreOpen] = useState(false);
   const morePanelId = useId();
+  // 한마디 — 선택 입력. 포인트·제출 가능 여부와 무관
+  const [text, setText] = useState('');
+  const textId = useId();
+  const textRef = useRef<HTMLTextAreaElement>(null);
+
+  // 내용 높이에 맞춰 1~3줄로 늘이고, 3줄을 넘으면 안에서 스크롤
+  function fitText() {
+    const el = textRef.current;
+    if (!el) return;
+    const cs = getComputedStyle(el);
+    const px = (v: string) => parseFloat(v) || 0;
+    const padding = px(cs.paddingTop) + px(cs.paddingBottom);
+    const border = px(cs.borderTopWidth) + px(cs.borderBottomWidth);
+    el.style.height = 'auto';
+    // scrollHeight = 글 + 안쪽 여백 (테두리 제외), box-sizing은 border-box
+    const want = el.scrollHeight + border;
+    const max = BODY_LINE_PX * BODY_MAX_LINES + padding + border;
+    el.style.height = `${Math.min(want, max)}px`;
+    el.style.overflowY = want > max ? 'auto' : 'hidden';
+  }
 
   // iOS 햅틱용 숨김 스위치 — React 타입에 switch 속성이 없어 ref로 붙인다
   const hapticId = useId();
@@ -138,7 +163,7 @@ export default function ReviewSheet({
     setError(null);
     setBusy(true);
     try {
-      await submitReview(placeId, selected, source);
+      await submitReview(placeId, selected, source, text);
       // await 뒤라 iOS 스위치 햅틱은 동작하지 않는다 — vibrate 지원 환경만
       try {
         navigator.vibrate?.(30);
@@ -335,6 +360,30 @@ export default function ReviewSheet({
 
       {/* 버튼은 가로 꽉 차게. 주 행동(제출)이 위, 건너뛰기는 아래 조용히 */}
       <div className="flex flex-col gap-2 pt-1">
+        {/* 한마디 — 제출 버튼 바로 위. 선택 입력이라 비어 있어도 제출된다 (포인트 없음) */}
+        <div className="flex flex-col gap-1">
+          <label htmlFor={textId} className="sr-only">
+            한마디
+          </label>
+          <textarea
+            ref={textRef}
+            id={textId}
+            rows={1}
+            maxLength={BODY_MAX}
+            value={text}
+            placeholder="한마디 남기기 (선택)"
+            aria-describedby={`${textId}-count`}
+            disabled={busy}
+            className="block w-full resize-none overflow-hidden rounded-[14px] border-[1.5px] border-[#998878] bg-white px-4 py-2.5 text-base leading-6 text-[#2A211B] placeholder:text-[#7A5B43] disabled:opacity-60"
+            onChange={(e) => {
+              setText(e.target.value);
+              fitText();
+            }}
+          />
+          <p id={`${textId}-count`} className={`self-end text-xs ${SUB_TEXT}`}>
+            {text.length}/{BODY_MAX}
+          </p>
+        </div>
         <button
           type="button"
           className="min-h-[52px] w-full rounded-lg bg-[#D63A26] px-4 font-medium text-white disabled:opacity-40"

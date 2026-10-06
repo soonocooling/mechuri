@@ -1,8 +1,11 @@
 'use client';
-// 담당 B — plan.md §10 추천 가게 지도, §1 화면 3, §5-2 n_p, §8 국캠 좌표, §9 NEXT_PUBLIC_KAKAO_MAP_KEY
+// 담당 B — plan.md §10 추천 가게 지도, §1 화면 3, §5-4 지도 규칙, §8 국캠 좌표, §9 NEXT_PUBLIC_KAKAO_MAP_KEY
+// 점 모양은 docs/design-system.md §5 (순위 지도 components/KakaoMap.tsx와 같은 4단계)
 import { useEffect, useRef, useState } from 'react';
-import { Do_Hyeon } from 'next/font/google';
 import type { Place, RecKind } from '@/lib/types';
+import { getAllCurrentLists } from '@/lib/lists';
+import { getPlaces } from '@/lib/places';
+import { computeScores, rankPlaces, rankTier, type RankTier } from '@/lib/ranking';
 
 // ---------------------------------------------------------------------------
 // 카카오 지도 JS SDK — 이 파일에서 쓰는 만큼만 최소로 선언한다.
@@ -118,67 +121,121 @@ const CAMPUS = { lat: 37.382, lng: 126.669 };
 
 const KIND_LABEL: Record<RecKind, string> = { free: '무료', point: '3P', premium: '프리미엄' };
 
-// plan.md §13 디자인 규칙 — 가게 이름·숫자는 Do Hyeon
-const display = Do_Hyeon({ weight: '400', subsets: ['latin'], fallback: ['system-ui', 'sans-serif'] });
 const INK = '#2A211B';
+/** 내 맛집 점 · 추천 테두리와 꼬리표 (docs/design-system.md §5) */
+const NAVY = '#003876';
 
-/** 꼽은 사람 수(n_p) 3단계 — 주황~빨강 한 계열, 많을수록 진하게 (§13 지도 점) */
-const TIERS = [
-  { label: '1명', bg: '#FFD3A1', fg: INK },
-  { label: '2~3명', bg: '#FF8A3D', fg: INK },
-  { label: '4명 이상', bg: '#D2301E', fg: '#ffffff' },
-] as const;
+/** 선호도 4단계 — 순위 지도(components/KakaoMap.tsx)와 같은 값 (plan.md §5-4, docs/design-system.md §5) */
+const TIER_STYLE: Record<RankTier, { label: string; size: number; bg: string; fg: string; border: string }> = {
+  1: { label: '상위 10%', size: 34, bg: '#D63A26', fg: '#FFFFFF', border: '2px solid #FFFFFF' },
+  2: { label: '30%', size: 30, bg: '#FF8A3D', fg: INK, border: '2px solid #FFFFFF' },
+  3: { label: '60%', size: 26, bg: '#FFD3A1', fg: INK, border: '2px solid #FFFFFF' },
+  4: { label: '그 외', size: 22, bg: '#F3EFE8', fg: '#7A5B43', border: '1.5px solid #998878' },
+};
+const TIERS = [1, 2, 3, 4] as const;
 
-function tierOf(pickCount: number): (typeof TIERS)[number] {
-  if (pickCount >= 4) return TIERS[2];
-  if (pickCount >= 2) return TIERS[1];
-  return TIERS[0];
+const DOT_SHADOW = '0 1px 2px rgba(42,33,27,0.3)';
+// 선택한 추천 점: 남색 테두리 바깥에 흰 띠 + 잉크색 고리
+const SELECTED_SHADOW = `0 0 0 2px #FFFFFF, 0 0 0 4px ${INK}`;
+
+/** 순위 탭과 같은 전체 순위·색 단계 (rankPlaces, rankTier) */
+type RankInfo = { rank: number; tier: RankTier };
+type Ranking = { places: Place[]; info: Map<number, RankInfo> };
+
+function validCoord(lat: number, lng: number): boolean {
+  return Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0);
 }
 
-const DOT_SIZE = 28;
-// 지도 위에서 점이 묻히지 않을 만큼만, 회색 대신 잉크색으로 옅게
-const SELECTED_SHADOW = `0 0 0 3px ${INK}`;
-const DOT_SHADOW = '0 1px 2px rgba(42,33,27,0.3)';
-
-function recDot(r: Recommended): HTMLButtonElement {
-  const tier = tierOf(r.pickCount);
-  const el = document.createElement('button');
-  el.type = 'button';
-  el.textContent = String(r.pickCount);
-  el.setAttribute('aria-label', `${r.place.name}, ${r.pickCount}명이 꼽은 곳`);
+/** 단계별 점 모양 — 순위 지도의 pinElement와 같은 크기·색·글자 크기 */
+function styleDot(el: HTMLElement, tier: RankTier, label: string) {
+  const t = TIER_STYLE[tier];
+  // 세 자리 숫자도 점 안에 들어가게 글자를 줄인다
+  const fontSize = Math.round(t.size * 0.42) - (label.length >= 3 ? 2 : 0);
   Object.assign(el.style, {
-    width: `${DOT_SIZE}px`,
-    height: `${DOT_SIZE}px`,
+    width: `${t.size}px`,
+    height: `${t.size}px`,
     borderRadius: '9999px',
-    border: '2px solid #ffffff',
-    background: tier.bg,
-    color: tier.fg,
-    fontFamily: display.style.fontFamily,
-    fontSize: '14px',
-    fontWeight: '400',
+    border: t.border,
+    background: t.bg,
+    color: t.fg,
+    fontSize: `${fontSize}px`,
+    fontWeight: '700',
     lineHeight: '1',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    boxShadow: DOT_SHADOW,
-    cursor: 'pointer',
     padding: '0',
+    boxShadow: DOT_SHADOW,
   });
+}
+
+/** 바탕 점: 현재 리스트에 들어간 가게. 누르면 간단 카드 */
+function rankDot(name: string, info: RankInfo): HTMLButtonElement {
+  const el = document.createElement('button');
+  el.type = 'button';
+  el.title = `${name} · 전체 ${info.rank}위`;
+  el.setAttribute('aria-label', `${name}, 전체 ${info.rank}위`);
+  el.textContent = String(info.rank);
+  styleDot(el, info.tier, el.textContent);
+  el.style.cursor = 'pointer';
   return el;
 }
 
-function myDot(name: string): HTMLDivElement {
-  const el = document.createElement('div');
-  el.title = `내 맛집: ${name}`;
-  Object.assign(el.style, {
+/** 오늘의 추천 점: 단계 색 그대로 + 남색 테두리 + 위에 "추천" 꼬리표.
+ *  리스트에 아무도 안 넣은 가게(순위 없음)는 4단계 색에 숫자 없이 */
+function recDot(r: Recommended, info: RankInfo | undefined): HTMLButtonElement {
+  const label = info ? String(info.rank) : '';
+  const el = document.createElement('button');
+  el.type = 'button';
+  el.setAttribute(
+    'aria-label',
+    `${r.place.name}, 오늘의 추천${info ? `, 전체 ${info.rank}위` : ''}`
+  );
+  styleDot(el, info?.tier ?? 4, label);
+  Object.assign(el.style, { border: `3px solid ${NAVY}`, position: 'relative', cursor: 'pointer' });
+
+  const tag = document.createElement('span');
+  tag.textContent = '추천';
+  Object.assign(tag.style, {
+    position: 'absolute',
+    bottom: 'calc(100% + 3px)',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    padding: '2px 6px',
+    borderRadius: '9999px',
+    background: NAVY,
+    color: '#FFFFFF',
+    fontSize: '11px',
+    fontWeight: '700',
+    lineHeight: '1.2',
+    whiteSpace: 'nowrap',
+    pointerEvents: 'none',
+  });
+  el.append(label, tag);
+  return el;
+}
+
+/** 내 맛집: 작은 남색 점. 순위 점이 있으면 그 오른쪽 위 모서리에 붙여 숫자를 가리지 않는다 */
+function myMark(name: string, info: RankInfo | undefined): HTMLDivElement {
+  const dot = document.createElement('div');
+  dot.title = `내 맛집: ${name}`;
+  Object.assign(dot.style, {
     width: '12px',
     height: '12px',
     borderRadius: '9999px',
-    border: '2px solid #ffffff',
-    background: '#9ca3af',
+    border: '2px solid #FFFFFF',
+    background: NAVY,
     boxShadow: DOT_SHADOW,
   });
-  return el;
+  if (!info) return dot;
+
+  // 순위 점과 같은 크기의 투명 상자 → 오버레이 중심이 순위 점 중심과 겹친다
+  const size = TIER_STYLE[info.tier].size;
+  const box = document.createElement('div');
+  Object.assign(box.style, { position: 'relative', width: `${size}px`, height: `${size}px`, pointerEvents: 'none' });
+  Object.assign(dot.style, { position: 'absolute', top: '-4px', right: '-4px' });
+  box.append(dot);
+  return box;
 }
 
 function campusLabel(): HTMLDivElement {
@@ -188,13 +245,23 @@ function campusLabel(): HTMLDivElement {
     padding: '3px 8px',
     borderRadius: '9999px',
     background: INK,
-    color: '#ffffff',
-    fontFamily: display.style.fontFamily,
+    color: '#FFFFFF',
     fontSize: '12px',
-    fontWeight: '400',
+    fontWeight: '600',
     whiteSpace: 'nowrap',
   });
   return el;
+}
+
+/** 순위 탭(app/ranking)과 같은 계산: 전체 현재 리스트 → computeScores → rankPlaces → rankTier */
+async function loadRanking(): Promise<Ranking> {
+  const [lists, places] = await Promise.all([getAllCurrentLists(), getPlaces()]);
+  const ranked = rankPlaces(computeScores(lists), places);
+  const total = ranked.length;
+  return {
+    places: ranked.map((r) => r.place),
+    info: new Map(ranked.map((r) => [r.place.id, { rank: r.rank, tier: rankTier(r.rank, total) }])),
+  };
 }
 
 type Status = 'loading' | 'ready' | 'unavailable';
@@ -203,8 +270,11 @@ export default function RecommendMap({ recommended, myPlaces }: RecommendMapProp
   const containerRef = useRef<HTMLDivElement>(null);
   const [kakao, setKakao] = useState<{ sdk: KakaoMapsSdk; map: KakaoMapInstance } | null>(null);
   const [status, setStatus] = useState<Status>(KAKAO_MAP_KEY ? 'loading' : 'unavailable');
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-  // 점을 다시 그릴 때도 선택 표시를 유지하려고 ref에도 둔다
+  // undefined = 불러오는 중, null = 실패(바탕 점 없이 추천·내 맛집만 그린다)
+  const [ranking, setRanking] = useState<Ranking | null | undefined>(undefined);
+  // 아래 카드: 추천 점(사유 포함) 또는 바탕 점(간단 카드)
+  const [card, setCard] = useState<{ kind: 'rec' | 'place'; id: number } | null>(null);
+  // 강조 고리가 걸린 추천 점. 바탕 점을 눌러도 그대로 두고, 점을 다시 그릴 때도 유지하려고 ref로 둔다
   const selectedRef = useRef<number | null>(null);
   const dotsRef = useRef(new Map<number, HTMLButtonElement>());
 
@@ -231,51 +301,84 @@ export default function RecommendMap({ recommended, myPlaces }: RecommendMapProp
     };
   }, []);
 
-  // 점 그리기 + 모든 점이 보이게 범위 맞춤
+  // 전체 순위 (한 번)
   useEffect(() => {
-    if (!kakao) return;
+    let active = true;
+    loadRanking()
+      .then((r) => {
+        if (active) setRanking(r);
+      })
+      .catch((e: unknown) => {
+        console.error('[RecommendMap] 순위', e);
+        if (active) setRanking(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // 점 그리기 + 국캠·내 맛집·추천이 보이게 범위 맞춤 (바탕 점은 범위에 넣지 않는다)
+  useEffect(() => {
+    if (!kakao || ranking === undefined) return;
     const { sdk, map } = kakao;
     const overlays: KakaoCustomOverlay[] = [];
     const bounds = new sdk.LatLngBounds();
     const dots = dotsRef.current;
     dots.clear();
+    const info = ranking?.info ?? new Map<number, RankInfo>();
 
-    const add = (lat: number, lng: number, content: HTMLElement, zIndex: number) => {
+    const add = (lat: number, lng: number, content: HTMLElement, zIndex: number, fit: boolean) => {
+      if (!validCoord(lat, lng)) return;
       const position = new sdk.LatLng(lat, lng);
       const overlay = new sdk.CustomOverlay({ position, content, zIndex, clickable: true });
       overlay.setMap(map);
       overlays.push(overlay);
-      bounds.extend(position);
+      if (fit) bounds.extend(position);
     };
 
-    add(CAMPUS.lat, CAMPUS.lng, campusLabel(), 1);
-    for (const p of myPlaces) add(p.lat, p.lng, myDot(p.name), 2);
+    add(CAMPUS.lat, CAMPUS.lng, campusLabel(), 1, true);
+
+    // 바탕: 현재 리스트에 들어간 전체 가게, 진한 단계가 위. 추천 가게는 아래에서 추천 점으로 그린다
+    const recIds = new Set(recommended.map((r) => r.place.id));
+    for (const p of ranking?.places ?? []) {
+      const i = info.get(p.id);
+      if (!i || recIds.has(p.id)) continue;
+      const el = rankDot(p.name, i);
+      el.addEventListener('click', () => setCard({ kind: 'place', id: p.id }));
+      add(p.lat, p.lng, el, 10 - i.tier, false);
+    }
+
+    for (const p of myPlaces) add(p.lat, p.lng, myMark(p.name, info.get(p.id)), 20, true);
+
+    // 오늘의 추천: 가장 위
     for (const r of recommended) {
-      const el = recDot(r);
+      const el = recDot(r, info.get(r.place.id));
       if (selectedRef.current === r.place.id) el.style.boxShadow = SELECTED_SHADOW;
       el.addEventListener('click', () => {
         const prev = selectedRef.current === null ? undefined : dots.get(selectedRef.current);
         if (prev) prev.style.boxShadow = DOT_SHADOW;
         el.style.boxShadow = SELECTED_SHADOW;
         selectedRef.current = r.place.id;
-        setSelectedId(r.place.id);
+        setCard({ kind: 'rec', id: r.place.id });
       });
       dots.set(r.place.id, el);
-      // 꼽은 사람이 많은 점이 위로
-      add(r.place.lat, r.place.lng, el, 10 + r.pickCount);
+      add(r.place.lat, r.place.lng, el, 30, true);
     }
     map.setBounds(bounds, 40, 32, 32, 32);
 
     return () => {
       for (const o of overlays) o.setMap(null);
     };
-  }, [kakao, recommended, myPlaces]);
+  }, [kakao, ranking, recommended, myPlaces]);
 
+  // 추천 카드를 닫을 때만 강조 고리도 지운다 (바탕 카드는 추천 강조와 무관)
   function closeCard() {
-    const prev = selectedRef.current === null ? undefined : dotsRef.current.get(selectedRef.current);
-    if (prev) prev.style.boxShadow = DOT_SHADOW;
-    selectedRef.current = null;
-    setSelectedId(null);
+    if (card?.kind === 'rec') {
+      const prev = selectedRef.current === null ? undefined : dotsRef.current.get(selectedRef.current);
+      if (prev) prev.style.boxShadow = DOT_SHADOW;
+      selectedRef.current = null;
+    }
+    setCard(null);
   }
 
   if (status === 'unavailable') {
@@ -286,45 +389,65 @@ export default function RecommendMap({ recommended, myPlaces }: RecommendMapProp
     );
   }
 
-  const selected = recommended.find((r) => r.place.id === selectedId) ?? null;
+  const selected = card?.kind === 'rec' ? (recommended.find((r) => r.place.id === card.id) ?? null) : null;
+  const picked = card?.kind === 'place' ? (ranking?.places.find((p) => p.id === card.id) ?? null) : null;
+  const cardPlace = selected?.place ?? picked;
+  const cardRank = cardPlace ? ranking?.info.get(cardPlace.id)?.rank : undefined;
 
   return (
     <div className="flex flex-col gap-3">
       <div className="relative h-[260px] overflow-hidden rounded-xl bg-[#F5F4F2] dark:bg-white/10">
         <div ref={containerRef} className="h-full w-full" />
-        {status === 'loading' && (
+        {(status === 'loading' || ranking === undefined) && (
           <p className="absolute inset-0 flex items-center justify-center text-sm text-[#8C6A4F] dark:text-[#C9AE95]">
             지도를 불러오는 중…
           </p>
         )}
       </div>
 
-      {/* 범례: 색 3단계 = 꼽은 사람 수 */}
+      {/* 범례: 전체 순위 기준 선호도 4단계 + 내 맛집 + 추천 (순위 지도와 같은 단계) */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#8C6A4F] dark:text-[#C9AE95]">
-        <span className="font-bold">꼽은 사람 수</span>
-        {TIERS.map((t) => (
-          <span key={t.label} className="flex items-center gap-1">
-            <span
-              className="inline-block h-3 w-3 rounded-full border border-white"
-              style={{ background: t.bg }}
-            />
-            {t.label}
-          </span>
-        ))}
+        <span className="font-bold">선호도</span>
+        {TIERS.map((tier) => {
+          const t = TIER_STYLE[tier];
+          return (
+            <span key={tier} className="flex items-center gap-1">
+              <span
+                className="inline-block h-3 w-3 rounded-full"
+                style={{ background: t.bg, border: tier === 4 ? t.border : '1px solid #FFFFFF' }}
+              />
+              {t.label}
+            </span>
+          );
+        })}
         <span className="flex items-center gap-1">
-          <span className="inline-block h-2.5 w-2.5 rounded-full border border-white bg-[#9ca3af]" />
+          <span
+            className="inline-block h-2.5 w-2.5 rounded-full border border-white"
+            style={{ background: NAVY }}
+          />
           내 맛집
+        </span>
+        <span className="flex items-center gap-1">
+          <span
+            className="inline-block rounded-full px-1.5 text-[10px] font-bold leading-4 text-white"
+            style={{ background: NAVY }}
+          >
+            추천
+          </span>
         </span>
       </div>
 
-      {/* 선택한 가게: 카드로 감싸지 않고 구분선 아래 정보만 (§13 강조는 무료 추천 카드 한 곳) */}
-      {selected ? (
+      {/* 선택한 가게: 카드로 감싸지 않고 구분선 아래 정보만 (docs/design-system.md §4 강조는 무료 추천 카드 한 곳)
+          추천 점 → 사유·꼽은 사람 수까지, 바탕 점 → 이름 · "{대분류} · 전체 n위" · 카카오맵 링크만 */}
+      {cardPlace ? (
         <div className="flex flex-col gap-1.5 border-t border-[#E7E3DE] pt-3 dark:border-white/15">
           <div className="flex items-start gap-2">
             <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
-              <span className={`${display.className} text-xl`}>{selected.place.name}</span>
+              <span className="text-xl font-semibold">{cardPlace.name}</span>
               <span className="text-sm text-[#8C6A4F] dark:text-[#C9AE95]">
-                {selected.place.category} · {KIND_LABEL[selected.kind]} 추천
+                {cardPlace.category}
+                {selected ? ` · ${KIND_LABEL[selected.kind]} 추천` : ''}
+                {cardRank ? ` · 전체 ${cardRank}위` : ''}
               </span>
             </div>
             <button
@@ -335,20 +458,23 @@ export default function RecommendMap({ recommended, myPlaces }: RecommendMapProp
               닫기
             </button>
           </div>
-          <p className="text-sm text-[#8C6A4F] dark:text-[#C9AE95]">{selected.place.address}</p>
-          <p className="text-sm">&ldquo;{selected.reason}&rdquo;</p>
-          <p className="text-sm">
-            {selected.pickCount > 0 ? (
-              <>
-                <span className={`${display.className} text-base`}>{selected.pickCount}</span>명이
-                꼽은 곳
-              </>
-            ) : (
-              '아직 Top 리스트에 꼽은 사람이 없는 곳'
-            )}
-          </p>
+          {selected && (
+            <>
+              <p className="text-sm text-[#8C6A4F] dark:text-[#C9AE95]">{selected.place.address}</p>
+              <p className="text-sm">&ldquo;{selected.reason}&rdquo;</p>
+              <p className="text-sm">
+                {selected.pickCount > 0 ? (
+                  <>
+                    <span className="font-semibold">{selected.pickCount}</span>명이 꼽은 곳
+                  </>
+                ) : (
+                  '아직 Top 리스트에 꼽은 사람이 없는 곳'
+                )}
+              </p>
+            </>
+          )}
           <a
-            href={`https://place.map.kakao.com/${encodeURIComponent(selected.place.kakaoPlaceId)}`}
+            href={`https://place.map.kakao.com/${encodeURIComponent(cardPlace.kakaoPlaceId)}`}
             target="_blank"
             rel="noopener noreferrer"
             className="mt-2 flex min-h-[52px] w-full items-center justify-center rounded-lg border border-[#E7E3DE] px-4 font-medium dark:border-white/20"

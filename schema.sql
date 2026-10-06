@@ -59,8 +59,12 @@ create table if not exists public.reviews (
   user_id uuid not null default auth.uid() references auth.users (id),
   place_id bigint not null references public.places (id),
   source text not null check (source in ('onboarding', 'review', 'list_add')),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- 한마디(선택). 200자 이하 + 공백 아닌 글자 1개 이상 (migrate_review_body.sql과 같은 조건)
+  body text constraint reviews_body_length
+    check (body is null or (char_length(body) <= 200 and body ~ '\S'))
 );
+-- ▸ body가 없던 기존 DB는 이 파일 대신 migrate_review_body.sql을 실행한다 (create table if not exists는 칸을 추가하지 않음)
 
 create table if not exists public.review_tags (
   id bigint generated always as identity primary key,
@@ -147,10 +151,14 @@ begin
 end;
 $$;
 
+-- 인자가 다른 옛 3인자 버전이 남아 있으면 PostgREST 호출이 헷갈리므로 지운다
+drop function if exists public.submit_review(bigint, bigint[], text);
+
 create or replace function public.submit_review(
   p_place_id bigint,
   p_tag_ids bigint[],
-  p_source text
+  p_source text,
+  p_body text default null
 )
 returns bigint
 language plpgsql
@@ -160,6 +168,7 @@ as $$
 declare
   v_review_id bigint;
   v_n integer;
+  v_body text;
 begin
   v_n := coalesce(cardinality(p_tag_ids), 0);
   if v_n < 1 then
@@ -178,8 +187,11 @@ begin
     raise exception 'not authenticated';
   end if;
 
-  insert into public.reviews (user_id, place_id, source)
-  values (auth.uid(), p_place_id, p_source)
+  -- 앞뒤 공백(줄바꿈 포함)을 자르고, 빈 문자열이면 null. 200자 초과·공백만은 reviews_body_length가 막는다
+  v_body := nullif(regexp_replace(p_body, '^\s+|\s+$', '', 'g'), '');
+
+  insert into public.reviews (user_id, place_id, source, body)
+  values (auth.uid(), p_place_id, p_source, v_body)
   returning id into v_review_id;
 
   insert into public.review_tags (review_id, user_id, tag_id)
@@ -191,9 +203,9 @@ end;
 $$;
 
 revoke all on function public.save_list(bigint[], boolean) from public;
-revoke all on function public.submit_review(bigint, bigint[], text) from public;
+revoke all on function public.submit_review(bigint, bigint[], text, text) from public;
 grant execute on function public.save_list(bigint[], boolean) to authenticated;
-grant execute on function public.submit_review(bigint, bigint[], text) to authenticated;
+grant execute on function public.submit_review(bigint, bigint[], text, text) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- RLS (§4) — select·insert만. update·delete 정책 없음

@@ -1,5 +1,5 @@
 // 담당 B — plan.md §10, §5-6 추천
-import type { Category, Place, RecItem, RecKind } from './types';
+import type { Category, CurrentReview, Place, RecItem, RecKind, Tag } from './types';
 import { supabase } from './supabase';
 import { getAllCurrentLists } from './lists';
 import { getPlaces } from './places';
@@ -8,7 +8,7 @@ import { getCurrentReviews } from './reviews';
 import { getPointBalance } from './points';
 import { hasPremium } from './premium';
 import { computeScores, rankPlaces } from './ranking';
-import { computeTagStats } from './tagStats';
+import { breakdownForPlace, computeTagStats, EVALUATIVE_THRESHOLD } from './tagStats';
 
 /** 세 항(CF·CB·POP)이 모두 0이라 기여 최대 항을 정할 수 없을 때의 사유 */
 export const FALLBACK_REASON = '아직 정보가 적어 골라본 새로운 곳';
@@ -52,6 +52,171 @@ const TAG_GROUP_WEIGHT: Record<string, number> = {
 };
 
 type Scores = ReturnType<typeof computeScores>;
+
+// ---------------------------------------------------------------------------
+// 지금 상태 조건 (§5-6 "지금 상태 조건", 화면은 components/MoodPicker.tsx)
+// ---------------------------------------------------------------------------
+
+/** 땡기는 거의 대분류 칩 (places.category 12종에서 기타 제외) */
+export const CRAVING_CATEGORIES: Category[] = [
+  '한식', '중식', '일식', '양식', '아시안', '분식',
+  '치킨', '버거·피자', '샐러드·건강식', '카페·디저트', '술집',
+];
+
+export const HUNGER_OPTIONS = ['출출해요', '배고파요', '엄청 배고파요'] as const;
+export const COMPANY_OPTIONS = ['혼자', '둘이', '여럿', '술자리'] as const;
+export const BUDGET_OPTIONS = ['가볍게', '보통', '제대로'] as const;
+export type Hunger = (typeof HUNGER_OPTIONS)[number];
+export type Company = (typeof COMPANY_OPTIONS)[number];
+export type Budget = (typeof BUDGET_OPTIONS)[number];
+
+/** 배 상태 기본값. 이것만 골랐으면 조건이 없는 것으로 본다 */
+export const DEFAULT_HUNGER: Hunger = '배고파요';
+
+/** 땡기는 거 최대 개수: 무료·포인트(hasPremium false) 1개, 프리미엄 3개 */
+export const FREE_CRAVINGS = 1;
+export const PREMIUM_CRAVINGS = 3;
+
+/** 지금 상태 조건. 모든 칸이 선택 사항이고, 비어 있으면 조건 없는 추천과 같다 */
+export type RecContext = {
+  /** 땡기는 거: 대분류 */
+  categories?: Category[];
+  /** 땡기는 거: taste 칩 label */
+  tastes?: string[];
+  hunger?: Hunger;
+  company?: Company;
+  budget?: Budget;
+  /** 바로 먹고 싶어요 */
+  quick?: boolean;
+};
+
+/** 선택지 하나가 연결되는 태그(tags의 group_key·label)와 대분류 */
+type MoodLink = { tags: { group: string; label: string }[]; categories: Category[] };
+
+const link = (tags: [group: string, label: string][], categories: Category[] = []): MoodLink => ({
+  tags: tags.map(([group, label]) => ({ group, label })),
+  categories,
+});
+
+/** 질문 선택지 → 실제 태그 연결표 (§5-6 표). label은 schema.sql tags 시드 그대로 */
+export const MOOD_TAG_MAP: {
+  hunger: Record<Hunger, MoodLink>;
+  company: Record<Company, MoodLink>;
+  budget: Record<Budget, MoodLink>;
+  quick: MoodLink;
+} = {
+  hunger: {
+    출출해요: link([['portion', '적음'], ['portion', '보통']], ['분식', '카페·디저트']),
+    배고파요: link([]),
+    '엄청 배고파요': link([['portion', '푸짐'], ['value', '좋음']]),
+  },
+  company: {
+    혼자: link([['situation', '혼밥']]),
+    둘이: link([['situation', '밥약']]),
+    여럿: link([['situation', '단체·회식']]),
+    술자리: link([['situation', '술자리']]),
+  },
+  // price 칩 sort 1·2·3 순서
+  budget: {
+    가볍게: link([['price', '1인 1만 원 이하']]),
+    보통: link([['price', '1~2만 원']]),
+    제대로: link([['price', '2만 원 이상']]),
+  },
+  quick: link([['wait', '바로 입장']]),
+};
+
+/** T의 원소 하나: 태그 또는 대분류. label은 사유에 쓰는 이름 */
+type Want =
+  | { key: string; label: string; tag: Tag }
+  | { key: string; label: string; category: Category };
+
+function findTag(tags: Tag[], group: string, label: string): Tag | undefined {
+  return tags.find((t) => t.groupKey === group && t.label === label);
+}
+
+function tagWant(tag: Tag): Want {
+  // 평가형은 '좋음'·'보통'만으로는 뜻이 없어 그룹 이름을 붙인다 ("양 푸짐")
+  const label = tag.groupKind === 'evaluative' ? `${tag.groupLabel} ${tag.label}` : tag.label;
+  return { key: `t:${tag.id}`, label, tag };
+}
+
+/** 연결표 한 칸 → T 원소. 태그 데이터에 없는 label은 빠진다 */
+function resolveLink(tags: Tag[], l: MoodLink): Want[] {
+  const wants: Want[] = l.tags.flatMap(({ group, label }) => {
+    const tag = findTag(tags, group, label);
+    return tag ? [tagWant(tag)] : [];
+  });
+  for (const category of l.categories) wants.push({ key: `c:${category}`, label: category, category });
+  return wants;
+}
+
+/** 화면에 보여줄 선택지. 연결되는 태그·대분류가 하나도 없는 선택지는 뺀다 */
+export type MoodOptions = {
+  tastes: string[];
+  hunger: Hunger[];
+  company: Company[];
+  budget: Budget[];
+  quick: boolean;
+};
+
+export function moodOptions(tags: Tag[]): MoodOptions {
+  const usable = (l: MoodLink) => resolveLink(tags, l).length > 0;
+  return {
+    tastes: tags.filter((t) => t.groupKey === 'taste').map((t) => t.label),
+    hunger: HUNGER_OPTIONS.filter((h) => h === DEFAULT_HUNGER || usable(MOOD_TAG_MAP.hunger[h])),
+    company: COMPANY_OPTIONS.filter((c) => usable(MOOD_TAG_MAP.company[c])),
+    budget: BUDGET_OPTIONS.filter((b) => usable(MOOD_TAG_MAP.budget[b])),
+    quick: usable(MOOD_TAG_MAP.quick),
+  };
+}
+
+/** 조건이 하나라도 있는지 (배고파요는 조건 아님) */
+export function hasConditions(c: RecContext): boolean {
+  return (
+    (c.categories?.length ?? 0) > 0 ||
+    (c.tastes?.length ?? 0) > 0 ||
+    (c.hunger !== undefined && c.hunger !== DEFAULT_HUNGER) ||
+    c.company !== undefined ||
+    c.budget !== undefined ||
+    c.quick === true
+  );
+}
+
+/** 무료 선(땡기는 거 1개)을 넘는 조건이 있는지 */
+function exceedsFree(c: RecContext): boolean {
+  const cravings = (c.categories?.length ?? 0) + (c.tastes?.length ?? 0);
+  return cravings > FREE_CRAVINGS || hasConditions({ ...c, categories: [], tastes: [] });
+}
+
+/** 무료·유료 선에 맞게 자른다. 땡기는 거는 대분류 → 맛 순으로 앞에서부터 남긴다 */
+function scopeContext(c: RecContext, premium: boolean): RecContext {
+  const max = premium ? PREMIUM_CRAVINGS : FREE_CRAVINGS;
+  const categories = (c.categories ?? []).slice(0, max);
+  const tastes = (c.tastes ?? []).slice(0, max - categories.length);
+  if (!premium) return { categories, tastes };
+  return { ...c, categories, tastes };
+}
+
+/** 요청 태그 집합 T. 질문 순서(땡기는 거 → 배 상태 → 누구랑 → 예산·시간), 겹치는 원소는 한 번만 */
+function resolveWants(c: RecContext, tags: Tag[]): Want[] {
+  const wants: Want[] = [];
+  for (const label of c.tastes ?? []) {
+    const tag = findTag(tags, 'taste', label);
+    if (tag) wants.push(tagWant(tag));
+  }
+  if (c.hunger) wants.push(...resolveLink(tags, MOOD_TAG_MAP.hunger[c.hunger]));
+  if (c.company) wants.push(...resolveLink(tags, MOOD_TAG_MAP.company[c.company]));
+  if (c.budget) wants.push(...resolveLink(tags, MOOD_TAG_MAP.budget[c.budget]));
+  if (c.quick) wants.push(...resolveLink(tags, MOOD_TAG_MAP.quick));
+  const seen = new Set<string>();
+  return wants.filter((x) => !seen.has(x.key) && seen.add(x.key));
+}
+
+/** 대분류 제한을 풀었을 때 결과에 붙는 안내 */
+export const RELAXED_NOTICE = '조건에 딱 맞는 곳이 없어 가까운 곳을 골랐어요';
+
+/** recommend() 결과. notice = 대분류 제한을 풀었을 때 안내 (저장하지 않는다) */
+export type RecResult = RecItem[] & { notice?: string };
 
 /** w(r) = 1 / log₂(r + 1) (§5-2) */
 function w(rank: number): number {
@@ -196,16 +361,28 @@ function rankPositions(scores: Scores, places: Map<number, Place>): Map<number, 
   return new Map(rankPlaces(scores, places).map((r) => [r.place.id, r.rank]));
 }
 
+/** 평가형 칩 중 그 칩 응답의 LB ≥ 0.40인 tag id (+1 칩이면 §5-3 긍정 통과와 같다) */
+function evaluativePassed(placeId: number, reviews: CurrentReview[], tags: Tag[]): Set<number> {
+  const passed = new Set<number>();
+  for (const g of breakdownForPlace(placeId, reviews, tags)) {
+    if (g.groupKind !== 'evaluative' || g.n === 0) continue;
+    for (const c of g.chips) if (c.lb >= EVALUATIVE_THRESHOLD) passed.add(c.tagId);
+  }
+  return passed;
+}
+
 /**
  * 후보를 점수순으로 count곳 고르고 사유를 붙인다. 저장은 하지 않는다.
- * excludeIds는 항상 빼고, softExcludeIds는 빼서 후보가 0곳이 되면 다시 넣는다 (빈 알보다 반복이 낫다)
+ * excludeIds는 항상 빼고, softExcludeIds는 빼서 후보가 0곳이 되면 다시 넣는다 (빈 알보다 반복이 낫다).
+ * context가 있으면 대분류 제한과 ctx를 반영한다(§5-6 지금 상태 조건). relaxed = 대분류 제한을 풀었음
  */
 async function computeRecommendations(
   userId: string,
   count: number,
   excludeIds: number[] = [],
-  softExcludeIds: number[] = []
-): Promise<RecItem[]> {
+  softExcludeIds: number[] = [],
+  context: RecContext = {}
+): Promise<{ items: RecItem[]; relaxed: boolean }> {
   const [lists, reviews, tags, places] = await Promise.all([
     getAllCurrentLists(),
     getCurrentReviews(),
@@ -222,9 +399,18 @@ async function computeRecommendations(
   for (const r of reviews) seen.add(r.placeId);
   const allowed = [...seen].filter((id) => !mine.has(id) && !excluded.has(id) && places.has(id));
   const soft = new Set(softExcludeIds);
-  const fresh = allowed.filter((id) => !soft.has(id));
-  const candidates = fresh.length > 0 ? fresh : allowed;
-  if (candidates.length === 0) return [];
+  const withoutRepeats = (ids: number[]) => {
+    const fresh = ids.filter((id) => !soft.has(id));
+    return fresh.length > 0 ? fresh : ids;
+  };
+  // 땡기는 거 대분류: 그 대분류 안에서 고르고(반복 제외 → 해제), 그래도 0곳이면 대분류 제한만 푼다
+  const wantCategories = new Set(context.categories ?? []);
+  let candidates = withoutRepeats(
+    allowed.filter((id) => wantCategories.has(places.get(id)!.category))
+  );
+  const relaxed = wantCategories.size > 0 && candidates.length === 0;
+  if (candidates.length === 0) candidates = withoutRepeats(allowed);
+  if (candidates.length === 0) return { items: [], relaxed: false };
 
   // C 함수 결과. 아직 빈 Map이면 해당 값은 아래에서 0으로 흡수된다
   const scores = computeScores(lists);
@@ -278,13 +464,40 @@ async function computeRecommendations(
   // POP = S̃ / max S̃
   const popMax = Math.max(0, ...[...scores.values()].map((s) => s.score));
 
+  // 지금 상태: ctx(p) = (p에 붙은 T 원소 수) / |T|. 조건이 있으면 최종 = 0.6·score + 0.4·ctx
+  const conditioned = hasConditions(context);
+  const wants = resolveWants(context, tags);
+  const reviewsOf = new Map<number, CurrentReview[]>();
+  for (const r of reviews) {
+    if (!reviewsOf.has(r.placeId)) reviewsOf.set(r.placeId, []);
+    reviewsOf.get(r.placeId)!.push(r);
+  }
+  const matchedWants = (p: number): Want[] => {
+    if (wants.length === 0) return [];
+    const descriptive = new Set(assigned(p));
+    const evaluative = wants.some((x) => 'tag' in x && x.tag.groupKind === 'evaluative')
+      ? evaluativePassed(p, reviewsOf.get(p) ?? [], tags)
+      : new Set<number>();
+    const category = places.get(p)?.category;
+    return wants.filter((x) =>
+      'category' in x
+        ? x.category === category
+        : x.tag.groupKind === 'evaluative'
+          ? evaluative.has(x.tag.id)
+          : descriptive.has(x.tag.id)
+    );
+  };
+
   const scored = candidates.map((p) => {
     const x = placeVector(places.get(p)?.category, assigned(p), tagWeight);
     const cf = cfMax > 0 ? (cfRaw.get(p) ?? 0) / cfMax : 0;
     const cb = cosine(taste, x);
     const pop = popMax > 0 ? (scores.get(p)?.score ?? 0) / popMax : 0;
     const terms = { cf: alpha * cf, cb: (1 - alpha) * 0.6 * cb, pop: (1 - alpha) * 0.4 * pop };
-    return { p, x, terms, score: terms.cf + terms.cb + terms.pop };
+    const base = terms.cf + terms.cb + terms.pop;
+    const matched = matchedWants(p);
+    const ctx = wants.length > 0 ? matched.length / wants.length : 0;
+    return { p, x, terms, matched, score: conditioned ? 0.6 * base + 0.4 * ctx : base };
   });
   scored.sort((a, b) => {
     const d = b.score - a.score;
@@ -295,8 +508,12 @@ async function computeRecommendations(
   const tagLabel = new Map(tags.map((t) => [t.id, t.label]));
   const myFirst = myList.find((i) => i.rank === 1) ?? myList[0];
 
-  // 사유: 세 항 중 기여 최대 항 (동률이면 CF → CB → POP 순)
-  const reasonFor = ({ p, x, terms }: (typeof scored)[number]): string => {
+  // 사유: 지금 상태 조건이 맞았으면 그 조건 1~2개가 먼저. 아니면 세 항 중 기여 최대 항 (동률이면 CF → CB → POP 순)
+  const reasonFor = ({ p, x, terms, matched }: (typeof scored)[number]): string => {
+    if (matched.length > 0) {
+      return `${matched.slice(0, 2).map((m) => `#${m.label}`).join(' · ')}에 딱 맞는 곳`;
+    }
+
     const best = Math.max(terms.cf, terms.cb, terms.pop);
     if (best <= EPS) return FALLBACK_REASON;
 
@@ -329,18 +546,21 @@ async function computeRecommendations(
     return position ? `국캠 전체 ${position}위` : FALLBACK_REASON;
   };
 
-  return scored.slice(0, count).map((s) => ({ placeId: s.p, reason: reasonFor(s) }));
+  const items = scored.slice(0, count).map((s) => ({ placeId: s.p, reason: reasonFor(s) }));
+  return { items, relaxed };
 }
 
 /** score = α·CF + (1−α)·(0.6·CB + 0.4·POP) (plan.md §5-6).
- *  insert와 오늘 free 결과 재사용도 여기서 한다. 결과가 0곳이면 insert하지 않는다 */
+ *  insert와 오늘 free 결과 재사용도 여기서 한다. 결과가 0곳이면 insert하지 않는다.
+ *  context(지금 상태 조건)는 새로 계산할 때만 반영한다. 오늘 free 기록이 있으면 무시 */
 export async function recommend(
   userId: string,
   kind: RecKind,
-  excludeIds?: number[]
-): Promise<RecItem[]> {
+  excludeIds?: number[],
+  context?: RecContext
+): Promise<RecResult> {
   try {
-    return await runRecommend(userId, kind, excludeIds);
+    return await runRecommend(userId, kind, excludeIds, context);
   } catch (e) {
     // 다른 lib(lists·places·tags·reviews 등)의 조회 실패 원문도 여기서 사용자용 문구로 바꾼다
     if (e instanceof Error && USER_MESSAGES.has(e.message)) throw e;
@@ -348,32 +568,52 @@ export async function recommend(
   }
 }
 
+/** 무료 선을 넘는 조건은 프리미엄일 때만 쓰고, 아니면 땡기는 거 1개로 자른다 (§5-6) */
+async function allowedContext(
+  userId: string,
+  kind: RecKind,
+  context: RecContext = {}
+): Promise<RecContext> {
+  // premium 추천은 runRecommend에서 hasPremium을 이미 확인했다
+  const premium = kind === 'premium' || (exceedsFree(context) && (await hasPremium(userId)));
+  return scopeContext(context, premium);
+}
+
+/** 저장하고, 대분류 제한을 풀었으면 안내를 붙인다 */
+async function finish(
+  userId: string,
+  kind: RecKind,
+  { items, relaxed }: { items: RecItem[]; relaxed: boolean }
+): Promise<RecResult> {
+  if (items.length === 0) return items;
+  await saveResult(userId, kind, items);
+  return relaxed ? Object.assign(items, { notice: RELAXED_NOTICE }) : items;
+}
+
 async function runRecommend(
   userId: string,
   kind: RecKind,
-  excludeIds?: number[]
-): Promise<RecItem[]> {
+  excludeIds?: number[],
+  context?: RecContext
+): Promise<RecResult> {
   if (kind === 'free') {
     const saved = await getTodayFree(userId);
     if (saved) return saved;
     // 최근 7일에 받은 free·point 가게는 되도록 빼고 고른다
     const recent = await getRecentPlaceIds(userId, ['free', 'point']);
-    const items = await computeRecommendations(userId, 1, [], recent);
-    if (items.length > 0) await saveResult(userId, 'free', items);
-    return items;
+    const ctx = await allowedContext(userId, kind, context);
+    return finish(userId, 'free', await computeRecommendations(userId, 1, [], recent, ctx));
   }
 
   if (kind === 'point') {
     if ((await getPointBalance(userId)) < POINT_COST) throw new Error(NOT_ENOUGH_POINTS_MESSAGE);
     // 3P를 내고 최근에 받은 가게가 또 나오지 않도록 최근 7일 free·point 가게를 되도록 뺀다
     const recent = await getRecentPlaceIds(userId, ['free', 'point']);
-    const items = await computeRecommendations(userId, 1, [], recent);
-    if (items.length > 0) await saveResult(userId, 'point', items);
-    return items;
+    const ctx = await allowedContext(userId, kind, context);
+    return finish(userId, 'point', await computeRecommendations(userId, 1, [], recent, ctx));
   }
 
   if (!(await hasPremium(userId))) throw new Error(PREMIUM_REQUIRED_MESSAGE);
-  const items = await computeRecommendations(userId, 5, excludeIds);
-  if (items.length > 0) await saveResult(userId, 'premium', items);
-  return items;
+  const ctx = await allowedContext(userId, kind, context);
+  return finish(userId, 'premium', await computeRecommendations(userId, 5, excludeIds, [], ctx));
 }
