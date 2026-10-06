@@ -1,0 +1,365 @@
+/* 담당 B — plan.md §1 화면 3 '메추리 알 깨기' 연출
+   색: 잉크 #2A211B, 바탕 #FFFFFF (알 색은 EggHatch.tsx의 SVG 속성)
+   시간: --intro --lap --drop --crack --open 은 EggHatch.tsx의 TIMING에서 넣는다 */
+
+.back,
+.front {
+  position: fixed;
+  inset: 0;
+  /* 메추리·알 위쪽 끝 (화면 높이 기준) */
+  --quail-top: 24dvh;
+  --quail-size: 150px;
+  --egg-top: 60dvh;
+  --egg-w: 96px;
+  /* 알이 메추리 몸통 아래에서 나오도록: 쉬는 자리 → 메추리 배 근처까지의 거리 */
+  --fall: calc(var(--quail-top) + 20px - var(--egg-top));
+}
+
+/* 흰 바탕 + 문구 + 메추리 */
+.back {
+  background: #ffffff;
+  color: #2a211b;
+  animation: fade-in var(--intro) ease-out both;
+}
+
+/* 알·껍데기. 드러나는 페이지보다 위라 껍데기가 날아가는 게 보인다 */
+.front {
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.caption {
+  position: absolute;
+  top: 8dvh;
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  max-width: 20rem;
+  padding: 0 16px;
+  text-align: center;
+  font-size: 22px;
+  line-height: 1.4;
+  word-break: keep-all;
+}
+
+.quail {
+  position: absolute;
+  top: var(--quail-top);
+  left: 50%;
+  width: var(--quail-size);
+  height: var(--quail-size);
+  margin-left: calc(var(--quail-size) / -2);
+}
+
+/* 엉덩이 들썩임 한 번 = --lap. 응답이 늦으면 반복 */
+.bob {
+  transform-origin: 50% 100%;
+  animation: bob var(--lap) ease-in-out infinite;
+}
+
+.egg {
+  position: absolute;
+  top: var(--egg-top);
+  left: 50%;
+  width: var(--egg-w);
+  aspect-ratio: 100 / 128;
+  margin-left: calc(var(--egg-w) / -2);
+}
+
+.eggMotion {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 100%;
+}
+
+.half {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.drop {
+  animation: drop var(--drop) both;
+}
+
+.shake3 {
+  animation: shake3 var(--crack) linear both;
+}
+
+.shake1 {
+  animation: shake1 var(--crack) linear both;
+}
+
+/* 금: pathLength=1, dasharray 1 2 → offset 1이면 안 보이고 0이면 다 보인다 (왼쪽부터 자람) */
+.crackHidden,
+.crackDone,
+.crack3,
+.crack1 {
+  stroke-dasharray: 1 2;
+}
+
+.crackHidden {
+  stroke-dashoffset: 1;
+}
+
+.crackDone {
+  stroke-dashoffset: 0;
+}
+
+.crack3 {
+  animation: crack3 var(--crack) linear both;
+}
+
+.crack1 {
+  animation: crack1 var(--crack) linear both;
+}
+
+/* 윗껍데기: 금 오른쪽 끝을 경첩 삼아 들렸다가 오른쪽 위로 날아감 */
+.lidFly {
+  transform-origin: 94% 49%;
+  animation: lid-fly var(--open) both;
+}
+
+/* 아랫껍데기: 아래로 떨어지며 사라짐 */
+.baseFall {
+  transform-origin: 50% 100%;
+  animation: base-fall var(--open) both;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes bob {
+  0%,
+  100% {
+    transform: none;
+  }
+  22% {
+    transform: translateY(-12px) rotate(-4deg);
+  }
+  42% {
+    transform: translateY(0) scale(1.06, 0.92);
+  }
+  60% {
+    transform: translateY(-5px) rotate(3deg);
+  }
+  80% {
+    transform: translateY(0) scale(1.02, 0.98);
+  }
+}
+
+/* 메추리 밑에서 작게 나와 떨어진 뒤 통통 두 번 튐 */
+@keyframes drop {
+  0% {
+    opacity: 0;
+    transform: translateY(var(--fall)) scale(0.3);
+    animation-timing-function: ease-in;
+  }
+  6% {
+    opacity: 1;
+  }
+  42% {
+    transform: translateY(0) scale(1.08, 0.86);
+    animation-timing-function: ease-out;
+  }
+  58% {
+    transform: translateY(-34px) scale(0.97, 1.04);
+    animation-timing-function: ease-in;
+  }
+  72% {
+    transform: translateY(0) scale(1.05, 0.93);
+    animation-timing-function: ease-out;
+  }
+  84% {
+    transform: translateY(-10px) scale(1);
+    animation-timing-function: ease-in;
+  }
+  94% {
+    transform: translateY(0) scale(1.02, 0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 흔들림 3번(0~76%) + 바르르 떨림(76~94%). 금은 crack3에서 흔들림마다 한 칸씩 */
+@keyframes shake3 {
+  0%,
+  6% {
+    transform: translateX(0) rotate(0);
+  }
+  10% {
+    transform: translateX(0) rotate(-9deg);
+  }
+  14% {
+    transform: translateX(0) rotate(7deg);
+  }
+  18% {
+    transform: translateX(0) rotate(-4deg);
+  }
+  22%,
+  31% {
+    transform: translateX(0) rotate(0);
+  }
+  35% {
+    transform: translateX(0) rotate(-10deg);
+  }
+  39% {
+    transform: translateX(0) rotate(8deg);
+  }
+  43% {
+    transform: translateX(0) rotate(-5deg);
+  }
+  47%,
+  56% {
+    transform: translateX(0) rotate(0);
+  }
+  60% {
+    transform: translateX(0) rotate(-12deg);
+  }
+  64% {
+    transform: translateX(0) rotate(9deg);
+  }
+  68% {
+    transform: translateX(0) rotate(-5deg);
+  }
+  72%,
+  76% {
+    transform: translateX(0) rotate(0);
+  }
+  78%,
+  82%,
+  86%,
+  90% {
+    transform: translateX(-2px) rotate(-1deg);
+  }
+  80%,
+  84%,
+  88%,
+  92% {
+    transform: translateX(2px) rotate(1deg);
+  }
+  94%,
+  100% {
+    transform: translateX(0) rotate(0);
+  }
+}
+
+@keyframes crack3 {
+  0%,
+  6% {
+    stroke-dashoffset: 1;
+  }
+  11%,
+  31% {
+    stroke-dashoffset: 0.66;
+  }
+  36%,
+  56% {
+    stroke-dashoffset: 0.33;
+  }
+  61%,
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* 짧은 버전: 흔들림 1번(0~60%) + 떨림 */
+@keyframes shake1 {
+  0%,
+  8% {
+    transform: translateX(0) rotate(0);
+  }
+  22% {
+    transform: translateX(0) rotate(-10deg);
+  }
+  36% {
+    transform: translateX(0) rotate(8deg);
+  }
+  48% {
+    transform: translateX(0) rotate(-4deg);
+  }
+  58%,
+  62% {
+    transform: translateX(0) rotate(0);
+  }
+  66%,
+  76%,
+  86% {
+    transform: translateX(-2px) rotate(-1deg);
+  }
+  71%,
+  81%,
+  91% {
+    transform: translateX(2px) rotate(1deg);
+  }
+  96%,
+  100% {
+    transform: translateX(0) rotate(0);
+  }
+}
+
+@keyframes crack1 {
+  0%,
+  10% {
+    stroke-dashoffset: 1;
+  }
+  30%,
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes lid-fly {
+  0% {
+    opacity: 1;
+    transform: none;
+    animation-timing-function: ease-out;
+  }
+  28% {
+    opacity: 1;
+    transform: rotate(-32deg);
+    animation-timing-function: ease-in;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(60vw, -80dvh) rotate(50deg);
+  }
+}
+
+@keyframes base-fall {
+  0%,
+  20% {
+    opacity: 1;
+    transform: none;
+    animation-timing-function: ease-in;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(45dvh) rotate(-10deg);
+  }
+}
+
+/* 페이지가 동작 줄이기 설정이면 연출을 띄우지 않지만, 혹시 뜨더라도 움직이지 않게 */
+@media (prefers-reduced-motion: reduce) {
+  .back,
+  .bob,
+  .drop,
+  .shake3,
+  .shake1,
+  .crack3,
+  .crack1,
+  .lidFly,
+  .baseFall {
+    animation: none;
+  }
+}
