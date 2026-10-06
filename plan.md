@@ -88,6 +88,7 @@
 │ 베타 기간 실제 결제 없음│
 └───────────────────────┘
 ```
+- 추천 결과 위에 지도: 추천 가게 점은 꼽은 사람 수(n_p)가 많을수록 진한 한 가지 색(1명 / 2~3명 / 4명 이상 3단계), 내 리스트 가게는 회색 점, 국캠 위치 표시
 
 ## 2. 테이블 (무엇 하나당 한 줄)
 
@@ -406,6 +407,7 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 | app/ranking/page.tsx, components/FilterSheet.tsx | C | 순위 탭 |
 | components/PlaceDetail.tsx | C | 가게 상세 시트 |
 | components/KakaoMap.tsx | C | 지도(여유 있을 때) |
+| components/RecommendMap.tsx | B | 추천 가게 지도 |
 | app/me/page.tsx, app/premium/page.tsx | C | 마이(포인트 표시·프리미엄), 모의 결제 |
 
 ### 함수 약속 (먼저 이 모양대로 만들고 속은 나중에 채운다)
@@ -488,7 +490,7 @@ buyPremium(): Promise<void>
 ## 11. 우선순위 (해커톤)
 1. **필수** (데모 핵심): 가입·로그인 / 검색 + Top 3 저장 / 온보딩 태그 입력 / 순위 목록 + 대분류 필터 / 태그 집계 함수 computeTagStats(추천 CB가 사용) / 무료 추천 1곳
 2. **목표**: 태그 필터 UI / 가게 상세 + 간단 리뷰 / 포인트 표시·포인트 추천 / 모의 결제 + 프리미엄 5곳 / 내 맛집 편집
-3. **여유**: 카카오 지도 뷰 / 유도 모달·배너 다듬기 / 취향 분석
+3. **여유**: 카카오 지도 뷰 / 추천 탭 지도 / 유도 모달·배너 다듬기 / 취향 분석
 
 ## 12. 해커톤에서 뺀 것·바꾼 것 (기획서 대비)
 Claude Code가 기획서를 보고 아래 항목을 구현하지 않도록 전부 적는다.
