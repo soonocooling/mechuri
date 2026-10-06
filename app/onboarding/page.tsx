@@ -8,6 +8,7 @@ import { ensurePlace } from '@/lib/places';
 import { getCurrentList, saveList } from '@/lib/lists';
 import PlaceSearch from '@/components/PlaceSearch';
 import ReviewSheet from '@/components/ReviewSheet';
+import { moveItem, useDragReorder } from '@/lib/useDragReorder';
 
 const TOP_N = 3;
 
@@ -21,6 +22,12 @@ export default function OnboardingPage() {
   const [earned, setEarned] = useState<number[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 담당 B — 꾹 눌러 끌어서 순서 바꾸기 (내 맛집과 같은 동작)
+  const dnd = useDragReorder({
+    count: picked.length,
+    disabled: busy,
+    onMove: (from, to) => setPicked((prev) => moveItem(prev, from, to)),
+  });
 
   // 비로그인 → 로그인, 이미 리스트가 있으면 → 내 맛집 편집
   const userId = user?.id;
@@ -146,29 +153,42 @@ export default function OnboardingPage() {
       {error && <p className="text-sm text-red-600">{error}</p>}
 
       <ol className="flex flex-col gap-2">
-        {picked.map((p, i) => (
-          <li key={p.id} className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2">
-            <span className="w-5 font-semibold">{i + 1}</span>
-            <div className="min-w-0 flex-1">
-              <div className="truncate font-medium">{p.name}</div>
-              <div className="text-xs text-gray-500">{p.category}</div>
-            </div>
-            <button type="button" aria-label="위로" className="px-1 disabled:opacity-30" disabled={i === 0} onClick={() => move(i, -1)}>
-              ▲
-            </button>
-            <button type="button" aria-label="아래로" className="px-1 disabled:opacity-30" disabled={i === picked.length - 1} onClick={() => move(i, 1)}>
-              ▼
-            </button>
-            <button
-              type="button"
-              aria-label="빼기"
-              className="px-1 text-gray-400"
-              onClick={() => setPicked((prev) => prev.filter((x) => x.id !== p.id))}
+        {picked.map((p, i) => {
+          const lifted = dnd.lifted(i);
+          const offset = dnd.offset(i);
+          return (
+            <li
+              key={p.id}
+              className={`relative flex select-none items-center gap-2 rounded-lg border bg-background px-3 py-2 [-webkit-touch-callout:none] ${
+                lifted
+                  ? 'z-10 scale-[1.02] border-gray-300 shadow-lg'
+                  : `border-gray-200 ${dnd.drag ? 'transition-transform duration-200' : ''}`
+              }`}
+              style={offset ? { transform: `translateY(${offset}px)` } : undefined}
+              {...dnd.rowProps(i)}
             >
-              ✕
-            </button>
-          </li>
-        ))}
+              <span className="w-5 font-semibold">{dnd.shownIndex(i) + 1}</span>
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-medium">{p.name}</div>
+                <div className="text-xs text-gray-500">{p.category}</div>
+              </div>
+              <button type="button" aria-label="위로" className="px-1 disabled:opacity-30" disabled={i === 0} onClick={() => move(i, -1)}>
+                ▲
+              </button>
+              <button type="button" aria-label="아래로" className="px-1 disabled:opacity-30" disabled={i === picked.length - 1} onClick={() => move(i, 1)}>
+                ▼
+              </button>
+              <button
+                type="button"
+                aria-label="빼기"
+                className="px-1 text-gray-400"
+                onClick={() => setPicked((prev) => prev.filter((x) => x.id !== p.id))}
+              >
+                ✕
+              </button>
+            </li>
+          );
+        })}
       </ol>
 
       <button
