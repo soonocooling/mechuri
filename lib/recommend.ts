@@ -33,7 +33,13 @@ function loadFailed(cause: unknown): Error {
   return new Error(LOAD_FAILED_MESSAGE);
 }
 
-const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+const KST_OFFSET_MS = 9 * HOUR_MS;
+/** 하루 경계: 06:00 KST */
+const DAY_START_HOUR_MS = 6 * HOUR_MS;
+/** free·point 반복 방지 기간 */
+const REPEAT_WINDOW_MS = 7 * DAY_MS;
 const EPS = 1e-9;
 
 /** CB 벡터 블록 가중치 (§5-6). 태그 블록은 group_key로 찾고, 나머지 그룹은 쓰지 않는다 */
@@ -60,29 +66,20 @@ function objectParticle(word: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// 주 단위 (월 00:00 KST)
+// 하루 단위 (06:00 KST 경계). 새벽 0~6시는 전날에 속한다
 // ---------------------------------------------------------------------------
 
-/** KST 기준 월요일부터 지난 일수 (월 0 … 일 6) */
-function daysSinceMondayKst(now: Date): number {
-  const kst = new Date(now.getTime() + KST_OFFSET_MS); // UTC 필드 = KST 벽시계
-  return (kst.getUTCDay() + 6) % 7;
+/** 오늘 시작(가장 최근 06:00 KST) 시각 */
+function dayStartKst(now: Date): Date {
+  // 06:00 KST를 UTC 자정으로 옮기면 날짜 내림만 하면 된다
+  const shifted = new Date(now.getTime() + KST_OFFSET_MS - DAY_START_HOUR_MS);
+  const start = Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate());
+  return new Date(start - KST_OFFSET_MS + DAY_START_HOUR_MS);
 }
 
-/** 이번 주 시작(월 00:00 KST) 시각 */
-function weekStartKst(now: Date): Date {
-  const kst = new Date(now.getTime() + KST_OFFSET_MS);
-  const monday = Date.UTC(
-    kst.getUTCFullYear(),
-    kst.getUTCMonth(),
-    kst.getUTCDate() - daysSinceMondayKst(now)
-  );
-  return new Date(monday - KST_OFFSET_MS);
-}
-
-/** 다음 무료 추천(다음 월 00:00 KST)까지 남은 날짜 수. 월요일 7 … 일요일 1 */
-export function daysUntilNextFree(now: Date = new Date()): number {
-  return 7 - daysSinceMondayKst(now);
+/** 다음 무료 추천(다음 06:00 KST)까지 남은 시간(ms). 6시간 이하면 같은 날짜 아침 6시 */
+export function msUntilNextFree(now: Date = new Date()): number {
+  return dayStartKst(now).getTime() + DAY_MS - now.getTime();
 }
 
 // ---------------------------------------------------------------------------
@@ -105,14 +102,14 @@ function parseResult(json: string): RecItem[] {
   }
 }
 
-/** 이번 주(월 00:00 KST~) free 결과를 읽기만 한다. 기록이 없으면 null (저장하지 않음) */
-export async function getThisWeekFree(userId: string): Promise<RecItem[] | null> {
+/** 오늘(06:00 KST~) free 결과를 읽기만 한다. 기록이 없으면 null (저장하지 않음) */
+export async function getTodayFree(userId: string): Promise<RecItem[] | null> {
   const { data, error } = await supabase
     .from('recommendations')
     .select('result_json')
     .eq('user_id', userId)
     .eq('kind', 'free')
-    .gte('created_at', weekStartKst(new Date()).toISOString())
+    .gte('created_at', dayStartKst(new Date()).toISOString())
     .order('created_at', { ascending: false })
     .order('id', { ascending: false })
     .limit(1)
@@ -121,14 +118,15 @@ export async function getThisWeekFree(userId: string): Promise<RecItem[] | null>
   return data.length ? parseResult(data[0].result_json) : null;
 }
 
-/** 이번 주(월 00:00 KST~) 내가 kinds 추천으로 받은 가게 id */
-async function getThisWeekPlaceIds(userId: string, kinds: RecKind[]): Promise<number[]> {
+/** 최근 7일 안에 내가 kinds 추천으로 받은 가게 id */
+async function getRecentPlaceIds(userId: string, kinds: RecKind[]): Promise<number[]> {
+  const since = new Date(Date.now() - REPEAT_WINDOW_MS);
   const { data, error } = await supabase
     .from('recommendations')
     .select('result_json')
     .eq('user_id', userId)
     .in('kind', kinds)
-    .gte('created_at', weekStartKst(new Date()).toISOString())
+    .gte('created_at', since.toISOString())
     .returns<{ result_json: string }[]>();
   if (error) throw loadFailed(error);
   return data.flatMap((row) => parseResult(row.result_json).map((i) => i.placeId));
@@ -203,11 +201,15 @@ function rankPositions(scores: Scores, places: Map<number, Place>): Map<number, 
   return new Map(ids.map((id, i) => [id, i + 1]));
 }
 
-/** 후보를 점수순으로 count곳 고르고 사유를 붙인다. 저장은 하지 않는다 */
+/**
+ * 후보를 점수순으로 count곳 고르고 사유를 붙인다. 저장은 하지 않는다.
+ * excludeIds는 항상 빼고, softExcludeIds는 빼서 후보가 0곳이 되면 다시 넣는다 (빈 알보다 반복이 낫다)
+ */
 async function computeRecommendations(
   userId: string,
   count: number,
-  excludeIds: number[] = []
+  excludeIds: number[] = [],
+  softExcludeIds: number[] = []
 ): Promise<RecItem[]> {
   const [lists, reviews, tags, places] = await Promise.all([
     getAllCurrentLists(),
@@ -223,7 +225,10 @@ async function computeRecommendations(
   const seen = new Set<number>();
   for (const items of lists.values()) for (const i of items) seen.add(i.placeId);
   for (const r of reviews) seen.add(r.placeId);
-  const candidates = [...seen].filter((id) => !mine.has(id) && !excluded.has(id) && places.has(id));
+  const allowed = [...seen].filter((id) => !mine.has(id) && !excluded.has(id) && places.has(id));
+  const soft = new Set(softExcludeIds);
+  const fresh = allowed.filter((id) => !soft.has(id));
+  const candidates = fresh.length > 0 ? fresh : allowed;
   if (candidates.length === 0) return [];
 
   // C 함수 결과. 아직 빈 Map이면 해당 값은 아래에서 0으로 흡수된다
@@ -332,7 +337,7 @@ async function computeRecommendations(
 }
 
 /** score = α·CF + (1−α)·(0.6·CB + 0.4·POP) (plan.md §5-6).
- *  insert와 이번 주 free 결과 재사용도 여기서 한다. 결과가 0곳이면 insert하지 않는다 */
+ *  insert와 오늘 free 결과 재사용도 여기서 한다. 결과가 0곳이면 insert하지 않는다 */
 export async function recommend(
   userId: string,
   kind: RecKind,
@@ -353,18 +358,20 @@ async function runRecommend(
   excludeIds?: number[]
 ): Promise<RecItem[]> {
   if (kind === 'free') {
-    const saved = await getThisWeekFree(userId);
+    const saved = await getTodayFree(userId);
     if (saved) return saved;
-    const items = await computeRecommendations(userId, 1);
+    // 최근 7일에 받은 free·point 가게는 되도록 빼고 고른다
+    const recent = await getRecentPlaceIds(userId, ['free', 'point']);
+    const items = await computeRecommendations(userId, 1, [], recent);
     if (items.length > 0) await saveResult(userId, 'free', items);
     return items;
   }
 
   if (kind === 'point') {
     if ((await getPointBalance(userId)) < POINT_COST) throw new Error(NOT_ENOUGH_POINTS_MESSAGE);
-    // free와 같은 가게가 또 나오지 않도록 이번 주에 받은 free·point 가게를 뺀다
-    const received = await getThisWeekPlaceIds(userId, ['free', 'point']);
-    const items = await computeRecommendations(userId, 1, received);
+    // 3P를 내고 최근에 받은 가게가 또 나오지 않도록 최근 7일 free·point 가게를 되도록 뺀다
+    const recent = await getRecentPlaceIds(userId, ['free', 'point']);
+    const items = await computeRecommendations(userId, 1, [], recent);
     if (items.length > 0) await saveResult(userId, 'point', items);
     return items;
   }

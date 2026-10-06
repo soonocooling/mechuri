@@ -21,8 +21,8 @@ import { getPointBalance } from '@/lib/points';
 import { hasPremium } from '@/lib/premium';
 import {
   LOAD_FAILED_MESSAGE,
-  daysUntilNextFree,
-  getThisWeekFree,
+  getTodayFree,
+  msUntilNextFree,
   recommend,
 } from '@/lib/recommend';
 
@@ -35,7 +35,7 @@ const POINT_COST = 3;
 type Shown = { placeId: number; name: string; category: Category | null; reason: string };
 
 /**
- * result = null이면 이번 주 free 기록 없음.
+ * result = null이면 오늘(06:00 KST~) free 기록 없음.
  * pointResult·premiumResult = null이면 아직 요청 안 함.
  * premiumExclude = 직전 프리미엄 5곳의 placeId. 페이지 상태라 새로고침하면 초기화 (§5-6)
  * myPlaceIds = 내 현재 리스트 가게 (지도의 회색 점)
@@ -72,7 +72,7 @@ const SECONDARY = `${BUTTON} border border-[#E7E3DE] disabled:opacity-40 dark:bo
 const APPEAR =
   'transition duration-200 ease-out starting:scale-95 starting:opacity-0 motion-reduce:transition-none';
 
-/** 메추리알 반점 — 이번 주 무료 추천 카드에만 (§13 강조는 한 곳만) */
+/** 메추리알 반점 — 오늘의 무료 추천 카드에만 (§13 강조는 한 곳만) */
 const SPECKLE = [
   'radial-gradient(circle at 14% 22%, rgba(122,91,67,0.16) 0 4px, transparent 5px)',
   'radial-gradient(circle at 83% 16%, rgba(122,91,67,0.11) 0 9px, transparent 10px)',
@@ -130,8 +130,11 @@ const REVEAL_INNER = 'mx-auto w-full max-w-md px-4 py-4';
 /** 열림 시간 중 틈이 열리기 전 기다리는 비율 (윗껍데기가 먼저 젖혀지기 시작) */
 const REVEAL_DELAY = 0.1;
 
-/** 이번 주 무료 추천 — 반점 무늬를 깐 유일한 카드 */
-function FreeCard({ items, daysLeft }: { items: Shown[]; daysLeft: number }) {
+/** 하루 경계(06:00 KST)까지 이 시간 이하로 남았으면 새벽(0~6시)이라 다음 알은 '오늘' 아침 6시 */
+const DAWN_MS = 6 * 60 * 60 * 1000;
+
+/** 오늘의 무료 추천 — 반점 무늬를 깐 유일한 카드 */
+function FreeCard({ items, nextDay }: { items: Shown[]; nextDay: '오늘' | '내일' }) {
   return (
     <div
       className={`${APPEAR} flex flex-col gap-4 rounded-2xl border ${LINE} bg-[#F5F4F2] p-5 dark:bg-white/5`}
@@ -146,9 +149,7 @@ function FreeCard({ items, daysLeft }: { items: Shown[]; daysLeft: number }) {
           <p>&ldquo;{r.reason}&rdquo;</p>
         </div>
       ))}
-      <p className={`text-sm ${MUTED}`}>
-        다음 무료 추천까지 <span className={`${display.className} text-base`}>{daysLeft}</span>일
-      </p>
+      <p className={`text-sm ${MUTED}`}>다음 알은 {nextDay} 아침 6시에 나와요</p>
     </div>
   );
 }
@@ -174,7 +175,7 @@ function EmptyNote() {
   return <p className={`text-sm ${MUTED}`}>{EMPTY_EGG_MESSAGE}</p>;
 }
 
-/** 이번 주 무료 추천을 아직 안 받았을 때 맨 위 영역: 메추리 + 시간대 문구 + 추천 받기 */
+/** 오늘의 무료 추천을 아직 안 받았을 때 맨 위 영역: 메추리 + 시간대 문구 + 추천 받기 */
 function StartScreen({
   meal,
   empty,
@@ -201,7 +202,7 @@ function StartScreen({
       <h1 className={`${display.className} text-3xl leading-snug break-keep`}>
         메추리가 낳은 알에 오늘의 {meal} 메뉴가 들어 있어요
       </h1>
-      <p className={`text-sm ${MUTED}`}>일주일에 한 번, 내 취향에 맞는 곳을 무료로 골라 드려요.</p>
+      <p className={`text-sm ${MUTED}`}>하루 한 번, 내 취향에 맞는 곳을 무료로 골라 드려요.</p>
       {/* recommend()가 0곳을 돌려준 경우. 저장되지 않았으니 다시 시도할 수 있다 (§5-6) */}
       {empty && <EmptyNote />}
       <button type="button" className={PRIMARY} disabled={busy} onClick={onStart}>
@@ -359,14 +360,14 @@ export default function RecommendPage() {
     return items;
   }, [result, pointResult, premiumResult]);
 
-  // 진입 시에는 이번 주 free 결과·잔액·프리미엄 여부를 읽기만 한다. recommend()는 버튼을 눌렀을 때만 (§5-6)
+  // 진입 시에는 오늘 free 결과·잔액·프리미엄 여부를 읽기만 한다. recommend()는 버튼을 눌렀을 때만 (§5-6)
   const userId = user?.id;
   useEffect(() => {
     if (!userId) return;
     let active = true;
     Promise.all([
       getCurrentList(userId),
-      getThisWeekFree(userId),
+      getTodayFree(userId),
       getPointBalance(userId),
       hasPremium(userId),
     ])
@@ -558,7 +559,7 @@ export default function RecommendPage() {
   const mapView = mapItems.length > 0 && (
     <MapSection key="map" items={mapItems} myPlaceIds={myPlaceIds} />
   );
-  // 맨 위 영역: 이번 주 무료 추천을 아직 안 받았으면 시작 화면 → 지도, 받았으면 지도 → 무료 추천 카드.
+  // 맨 위 영역: 오늘의 무료 추천을 아직 안 받았으면 시작 화면 → 지도, 받았으면 지도 → 무료 추천 카드.
   // key로 순서만 바꿔 지도가 다시 마운트되지 않게 한다
   const top =
     result === null || result.length === 0
@@ -576,8 +577,9 @@ export default function RecommendPage() {
       : [
           mapView,
           <section key="free" className="flex flex-col gap-3">
-            <h1 className={`${display.className} text-3xl`}>오늘의 {meal} 메뉴 추천</h1>
-            <FreeCard items={result} daysLeft={daysUntilNextFree()} />
+            <h1 className={`${display.className} text-3xl`}>오늘의 메뉴 추천</h1>
+            <p className={`text-sm ${MUTED}`}>오늘 {meal}으로 어때요?</p>
+            <FreeCard items={result} nextDay={msUntilNextFree() <= DAWN_MS ? '오늘' : '내일'} />
           </section>,
         ];
 
