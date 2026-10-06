@@ -8,7 +8,7 @@
 - 가입자가 "내 맛집 Top 3~10"을 순위로 입력 → 전체 합산 순위
 - 가게마다 태그(음식 종류·맛·분위기·상황·가격대·청결·친절 등)를 칩으로 입력 → 태그 필터
 - 정보를 많이 입력할수록 포인트 보상 → 포인트로 추가 추천
-- 개인화 추천: 무료 주 1회 1곳 / 프리미엄(모의 결제) 무제한 5곳
+- 개인화 추천: 무료 하루 1회 1곳(06:00 KST 경계) / 프리미엄(모의 결제) 무제한 5곳
 - 스택: Next.js(App Router, TypeScript) + Tailwind + Supabase + Vercel + 카카오 로컬 API
 - 구현 원칙: 모든 페이지·컴포넌트는 `'use client'`. Supabase 호출은 `lib/supabase.ts` 브라우저 클라이언트(로그인 세션)로만 한다. 서버 코드는 `app/api/places/search` 하나이고 DB를 건드리지 않는다 (서버에는 사용자 세션이 없어 RLS의 auth.uid()가 null → 빈 결과·insert 거부)
 
@@ -71,11 +71,11 @@
 ### 화면 3 — 추천 탭 + 마이
 ```
 ┌───────────────────────┐
-│ 이번 주 추천 (무료 1곳)  │ [저장] 추천 실행 1건 → recommendations
+│ 오늘의 메뉴 추천         │ [저장] 추천 실행 1건 → recommendations
 │ △△돈까스               │
 │ "○○국밥을 꼽은 사람들이 │
 │  많이 꼽은 곳"          │
-│ 다음 무료 추천까지 4일  │
+│ 다음 알은 내일 아침 6시 │
 │ [3P로 한 번 더] 잔액 9P │ [저장] recommendations(kind=point)
 │ [프리미엄: 무제한 5곳]  │
 └───────────────────────┘
@@ -88,6 +88,9 @@
 │ 베타 기간 실제 결제 없음│
 └───────────────────────┘
 ```
+- 추천 결과 위에 지도: 추천 가게 점은 꼽은 사람 수(n_p)가 많을수록 진한 한 가지 색(1명 / 2~3명 / 4명 이상 3단계), 내 리스트 가게는 회색 점, 국캠 위치 표시
+- 알 깨기 연출(`components/EggHatch.tsx`, 추천 버튼을 눌렀을 때만, 동작 줄이기 설정이면 생략하고 버튼에 "메추리가 {끼니} 알을 낳고 있어요…"): 오늘 무료 추천 전엔 맨 위 영역만 시작 화면(메추리 + 문구 + 추천 받기)이고 3P·프리미엄 영역은 그대로 보임 → 흰 연출 층에서 메추리가 들썩임(0.7초×2, recommend() 동시 호출, 늦으면 반복) → 알이 떨어져 튐(1초) → 금 3번 + 떨림(2초) → 윗껍데기가 오른쪽으로 경첩처럼 열린 뒤 아랫껍데기와 함께 아래로 떨어지고, 메추리·문구는 위로 빠지며, 페이지가 금 위치의 알 폭 틈에서 둥글게 열린 뒤 화면 전체로 clip-path로 벌어짐(1.6초), 0곳이면 흔들리기만 하고 "이번 알은 비어 있었어요…" 후 닫힘, 에러면 바로 닫힘. 3P·프리미엄은 짧은 버전(금 1번, 약 3초)
+- 시간대 문구(한국 시간 Intl `Asia/Seoul`): 6~11시 아침, 11~17시 점심, 17~22시 저녁, 22~6시 야식 → 시작 "메추리가 낳은 알에 오늘의 {끼니} 메뉴가 들어 있어요", 들썩임·낙하 "메추리가 {끼니} 알을 낳고 있어요…", 금 "톡, 톡… 알에 금이 가고 있어요", 시작 화면 버튼 "오늘의 {끼니} 메뉴 추천 받기", 결과 제목 "오늘의 메뉴 추천"(끼니 없음) 아래 무료 추천 카드 바로 위 "오늘 {끼니}으로 어때요?"(볼 때의 시간대), 카드 아래 "다음 알은 내일 아침 6시에 나와요"(새벽 0~6시엔 "오늘 아침 6시")
 
 ## 2. 테이블 (무엇 하나당 한 줄)
 
@@ -232,11 +235,13 @@
 places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 
 ## 5. 계산 규칙 (앱 코드에서 계산, DB 뷰 없음)
+전체 조회는 Supabase API 기본 최대 1000행이라 넘으면 에러 없이 잘린다. 해커톤 규모에선 문제없고, 넘으면 `range`로 나눠 조회한다.
 
 ### 5-1. 현재 데이터
 - 현재 리스트: 사용자별 created_at 최신 ranking_lists의 ranking_items
 - 현재 리뷰: (user_id, place_id)별 created_at 최신 reviews + 그 review_tags
 - 첫 리뷰: (user_id, place_id)별 created_at 최초 reviews (포인트 계산용)
+- created_at이 같으면 id가 큰 쪽을 최신, 작은 쪽을 최초로 본다 (seed처럼 한 번에 넣은 행은 created_at이 같을 수 있음)
 
 ### 5-2. 순위 점수 (`lib/ranking.ts`)
 - w(r) = 1 / log₂(r + 1)
@@ -263,12 +268,16 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 - 개척: 기본 충족 + 이 리뷰 이전에 그 가게에 첫 리뷰를 남긴 다른 사용자 수 < 3 → 1P 대신 2P
 - 풍부: g ≥ 5 → +1P (기본 충족 시에만)
 
-온보딩 완주 보너스: 사용자의 is_onboarding = true 리스트의 rank 1~3 가게 모두 기본 충족 첫 리뷰가 있으면 +3P (1회)
+온보딩 완주 보너스: 사용자의 is_onboarding = true 리스트의 rank 1~3 가게 모두 기본 충족 첫 리뷰가 있으면 +3P (1회). 기준 리스트는 is_onboarding = true 중 가장 먼저 저장된 것(id 최소)
 
 잔액 = 적립 합 − 3 × (kind = point 인 recommendations 수). 잔액 < 3이면 포인트 추천 버튼 비활성
 
 - 미리보기: ReviewSheet가 열릴 때 `getReviewContext(placeId)`로 { isFirst, pioneer }를 한 번 받고, 칩을 누를 때마다 동기 함수 `previewPoints(tagIds, tags, ctx)`로 계산한다(칩마다 DB 조회 금지). isFirst = false면 0P
+- `getReviewContext`는 로그인 세션 사용자 기준(`supabase.auth.getUser`)으로 계산한다
+- 시트를 열어둔 사이 다른 사용자 리뷰로 미리보기와 실제 적립이 달라지는 경우는 무시한다
 - 온보딩 완료 화면 P = 세 ReviewSheet의 earned 합 + (세 곳 모두 earned > 0이면 3). 신규 사용자에겐 earned > 0 ⇔ 기본 충족 첫 리뷰이므로 §5-5 보너스 조건과 같다
+- `getPointBalance`는 userId = 로그인 세션 사용자일 때만 계산하고, 아니면 0 (recommendations는 본인만 읽혀서 남의 차감이 0으로 잡히는 것 방지)
+- 온보딩 완주 보너스 계산 시 `lib/points.ts`가 ranking_lists·ranking_items를 직접 읽는다(읽기만)
 
 ### 5-6. 추천 (`lib/recommend.ts`)
 - 후보: 현재 리스트나 현재 리뷰에 한 번이라도 등장한 가게 − 내 현재 리스트 − (프리미엄 "다시 추천" 시) 직전 결과
@@ -281,16 +290,25 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 - POP(p) = S̃(p) / max S̃
 - α = min(1, k/20), k = 내 리스트와 1곳 이상 겹치는 다른 사용자 수
 - score = α·CF + (1−α)·(0.6·CB + 0.4·POP)
+- score 동점은 §5-2 동점 규칙(n_p ↓ → 1위 표 수 ↓ → 이름 ↑)
 - 사유: 세 항 중 기여 최대 항 기준
   - CF → "〈내 1위 가게〉를 꼽은 사람들이 많이 꼽은 곳"
   - CB → "#〈일치 태그 1~2개〉 취향과 맞음"
-  - POP → "국캠 전체 〈n〉위"
+  - POP → "국캠 전체 〈n〉위". n은 순위 탭과 같은 기준(n_p ≥ 2 가게만, S̃ 내림차순)의 순위. n_p = 1이면 사유는 "신규 발견"
 - 개수·조건
   | kind | 결과 수 | 조건 |
   |---|---|---|
-  | free | 1 | 이번 주(월 00:00 KST~) free 기록이 없을 때. 있으면 새로 계산하지 않고 그 결과 표시 |
+  | free | 1 | 하루 1회. 오늘(06:00 KST ~ 다음 날 06:00 KST, 새벽 0~6시는 전날) free 기록이 없을 때. 있으면 새로 계산하지 않고 그 결과 표시 |
   | point | 1 | 잔액 ≥ 3 |
   | premium | 5 | hasPremium = true, 횟수 무제한 |
+- recommendations insert와 오늘 free 결과 재사용은 `recommend()` 안에서 처리한다
+- 결과가 0곳이면 insert하지 않고 빈 상태 문구를 표시한다 (free 하루 잠김·point 3P 차감 방지)
+- free 추천은 화면 진입 시 자동 실행하지 않고 버튼을 눌렀을 때 실행한다 (개발 모드에서 effect가 두 번 실행돼 중복 저장되는 것 방지)
+- 포인트 추천 버튼은 요청 중 비활성 (연타로 잔액이 음수가 되는 것 방지)
+- 프리미엄 "다시 추천"의 excludeIds는 페이지 상태로 보관한다(새로고침하면 초기화)
+- 반복 방지: free·point 추천은 최근 7일(지금 − 7×24시간~) 안에 내가 받은 free·point 추천 가게를 후보에서 제외. 제외 후 후보가 0곳이면 이 제외만 풀고 다시 고른다 (빈 알보다 반복이 낫다)
+- premium은 최근 기록을 빼지 않고 excludeIds만 제외
+- `recommend()`가 던지는 에러는 사용자용 한국어 문구(`lib/recommend.ts`에서 상수로 export). 화면은 받은 메시지를 그대로 표시한다
 
 ### 5-7. 프리미엄 (`lib/premium.ts`)
 - hasPremium(userId) = 본인 subscriptions 중 period_end > now() 가 하나라도 있음
@@ -299,10 +317,11 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 
 ### 5-8. 카카오 → 대분류 (`lib/categorize.ts`)
 판정 순서 (위에서 먼저 걸리는 것)
-1. category_name 어디든 "샐러드" 포함 → 샐러드·건강식
-2. 3번째 단어가 "피자" → 버거·피자 (카카오가 피자를 "양식 > 피자"로 주는 경우 대비)
-3. category_group_code = CE7 → 카페·디저트
-4. " > "로 나눈 2번째 단어로 아래 표
+1. category_name의 마지막 단어가 '회'면 일식 (카카오가 횟집을 '한식 > 해물,생선 > 회'로 분류해서, 일식 칩 '초밥·회'를 고를 수 있게 하려는 것. 해물,생선의 다른 업종은 그대로 한식)
+2. category_name 어디든 "샐러드" 포함 → 샐러드·건강식
+3. 3번째 단어가 "피자" → 버거·피자 (카카오가 피자를 "양식 > 피자"로 주는 경우 대비)
+4. category_group_code = CE7 → 카페·디저트
+5. " > "로 나눈 2번째 단어로 아래 표
 | 카카오 | 대분류 |
 |---|---|
 | 한식 | 한식 |
@@ -333,6 +352,7 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 
 시드 총 72행 (cuisine 30 + taste 10 + mood 6 + situation 8 + price 3 + 평가형 5×3).
 리뷰 시트의 cuisine 칩은 가게 category와 같은 parent_label 칩만 보여준다(기타면 전부).
+화면 표시 순서는 그룹을 이 표 순서(cuisine → wait)로, 그룹 안은 sort 순. sort는 그룹마다 1부터 다시 시작한다.
 
 ## 7. 인증
 - Supabase Auth 이메일 로그인 사용. 아이디 `soono` → 이메일 `soono@users.mechuri.app` 으로 변환해서 가입·로그인
@@ -341,6 +361,7 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 - Supabase 대시보드 Authentication → Email에서 **Confirm email 끔** (팀장)
 - 화면에 표시하는 아이디 = 이메일의 @ 앞부분
 - Top 3 미입력자: 추천 탭 잠금 + 앱을 열 때마다 입력 유도 모달 1회 + 순위 탭 상단 배너
+- Top 3 미입력자의 추천 탭 잠금 화면은 `app/recommend`(B)가 그린다
 
 ## 8. 카카오 검색
 - `GET /api/places/search?q=검색어` (서버 라우트, REST 키는 서버에서만)
@@ -389,6 +410,9 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 | app/ranking/page.tsx, components/FilterSheet.tsx | C | 순위 탭 |
 | components/PlaceDetail.tsx | C | 가게 상세 시트 |
 | components/KakaoMap.tsx | C | 지도(여유 있을 때) |
+| components/RecommendMap.tsx | B | 추천 가게 지도 |
+| components/EggHatch.tsx, components/EggHatch.module.css | B | 추천 탭 알 깨기 연출(§1 화면 3) |
+| public/brand/mechuri-mascot.svg | B | 메추리 캐릭터 그림 |
 | app/me/page.tsx, app/premium/page.tsx | C | 마이(포인트 표시·프리미엄), 모의 결제 |
 
 ### 함수 약속 (먼저 이 모양대로 만들고 속은 나중에 채운다)
@@ -471,7 +495,7 @@ buyPremium(): Promise<void>
 ## 11. 우선순위 (해커톤)
 1. **필수** (데모 핵심): 가입·로그인 / 검색 + Top 3 저장 / 온보딩 태그 입력 / 순위 목록 + 대분류 필터 / 태그 집계 함수 computeTagStats(추천 CB가 사용) / 무료 추천 1곳
 2. **목표**: 태그 필터 UI / 가게 상세 + 간단 리뷰 / 포인트 표시·포인트 추천 / 모의 결제 + 프리미엄 5곳 / 내 맛집 편집
-3. **여유**: 카카오 지도 뷰 / 유도 모달·배너 다듬기 / 취향 분석
+3. **여유**: 카카오 지도 뷰 / 추천 탭 지도 / 유도 모달·배너 다듬기 / 취향 분석
 
 ## 12. 해커톤에서 뺀 것·바꾼 것 (기획서 대비)
 Claude Code가 기획서를 보고 아래 항목을 구현하지 않도록 전부 적는다.
@@ -488,3 +512,24 @@ Claude Code가 기획서를 보고 아래 항목을 구현하지 않도록 전�
 | CB = 0.40 소분류 ‖ 0.25 맛 ‖ 0.15 분위기 ‖ 0.20 상황 | §5-6 (대분류 원핫 추가, cuisine 칩 사용) | 소분류 자동 분류가 없음 |
 | Subscription 상태·PaymentProvider | subscriptions 결제 1회 = 1줄, period_end > now() | 모의 결제만 |
 | 개척: 그 가게 리뷰 < 3건 | 그 가게 첫 리뷰 남긴 다른 사용자 < 3 | 추가만 구조에서 같은 의미 |
+| 무료 추천 주 1회 | 하루 1회(06:00 KST 경계) + 최근 7일 free·point 가게 제외(후보 0곳이면 제외 해제) | "지금 먹을 걸 골라주기" 컨셉 |
+
+## 13. 디자인 규칙 (B 화면에 먼저 적용, 공통 적용은 순오 검토 후)
+국캠 학생이 카톡 링크로 들어와 30초 안에 오늘 갈 곳을 정하는 모바일 화면. 한 손 엄지 기준.
+
+| 이름 | 값 | 쓰는 곳 |
+|---|---|---|
+| 잉크 | #2A211B | 본문 글자 |
+| 고추장 | #D63A26 | 주 행동 버튼, 선택된 칩 |
+| 노른자 | #FFB547 | 포인트 배지(+N P, 잔액) |
+| 반점 | #7A5B43 | 보조 글자 |
+| 선 | #E7E3DE | 테두리·구분선 |
+| 바탕 / 옅은 바탕 | #FFFFFF / #F5F4F2 | 배경 |
+| 지도 점 | 1명 #FFD3A1 / 2~3명 #FF8A3D / 4명 이상 #D2301E | 추천 지도(n_p) |
+
+- 글꼴: 제목·가게 이름·숫자는 Do Hyeon(`next/font/google`), 본문은 시스템 글꼴. 지금은 B 파일 안에서만 불러온다(layout.tsx 미수정)
+- 강조는 한 곳만: 오늘의 무료 추천 카드만 연한 메추리알 반점 무늬를 깐 유일한 카드. 3P·프리미엄 결과는 구분선 목록
+- 움직임: 추천 결과가 나타날 때 한 번만 짧게 커지며 등장. prefers-reduced-motion이면 끔
+- 칩: 완전 둥글게, 미선택은 선만, 선택은 고추장 채움 + 흰 글자. 그룹 제목은 작고 굵게(대문자 라벨·눈썹 라벨 금지), 그룹 사이 간격 넉넉히
+- 버튼: 가로 꽉 차게, 높이 52px 이상, 살짝 둥글게(칩과 위계 구분). 글자 끝 화살표(→) 금지
+- 피할 것: 모든 덩어리를 같은 둥근 카드로 쪼개기, 회색 그림자 남발, 그라데이션 장식
