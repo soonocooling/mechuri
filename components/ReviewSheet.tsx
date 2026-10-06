@@ -4,7 +4,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Do_Hyeon } from 'next/font/google';
 import type { Category, ReviewSource, Tag } from '@/lib/types';
-import { getTags, groupTags } from '@/lib/tags';
+import { getTags, groupTags, type TagGroup } from '@/lib/tags';
 import { submitReview } from '@/lib/reviews';
 import { getReviewContext, previewPoints } from '@/lib/points';
 
@@ -21,6 +21,14 @@ const display = Do_Hyeon({ weight: '400', subsets: ['latin'], fallback: ['system
 const SYSTEM_FONT =
   "system-ui, -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif";
 
+// 처음 펼쳐 보이는 그룹. 나머지(분위기·가격대·평가형)는 "더 알려주기" 접힘 영역 안에 §6 순서로
+const MAIN_GROUP_KEYS = ['cuisine', 'taste', 'situation'];
+
+// 칩·3칸 선택 공통 색 — 선택은 남색 채움 + 흰 글자, 미선택은 흰 바탕 + 선
+const ON_CLASS = 'border-[#003876] bg-[#003876] font-medium text-white';
+const OFF_CLASS = 'border-[#998878] bg-white text-[#2A211B]';
+const SUB_TEXT = 'text-[#7A5B43]';
+
 export default function ReviewSheet({
   placeId,
   placeCategory,
@@ -35,6 +43,9 @@ export default function ReviewSheet({
   const [selected, setSelected] = useState<number[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // "더 알려주기" 접힘 영역 — 기본은 접힘
+  const [moreOpen, setMoreOpen] = useState(false);
+  const morePanelId = useId();
 
   // iOS 햅틱용 숨김 스위치 — React 타입에 switch 속성이 없어 ref로 붙인다
   const hapticId = useId();
@@ -82,6 +93,22 @@ export default function ReviewSheet({
     [tags, placeCategory]
   );
 
+  // 펼쳐 보이는 그룹(MAIN_GROUP_KEYS 순)과 접힘 영역 그룹(나머지 전부, §6 순)으로 나눈다
+  const mainGroups = useMemo(
+    () =>
+      MAIN_GROUP_KEYS.flatMap((key) => groups.filter((g) => g.groupKey === key)),
+    [groups]
+  );
+  const moreGroups = useMemo(
+    () => groups.filter((g) => !MAIN_GROUP_KEYS.includes(g.groupKey)),
+    [groups]
+  );
+  // 접혀 있어도 헤더에 보여줄, 접힘 영역 안에서 고른 칩 수
+  const moreCount = useMemo(() => {
+    const ids = new Set(moreGroups.flatMap((g) => g.tags.map((t) => t.id)));
+    return selected.filter((id) => ids.has(id)).length;
+  }, [moreGroups, selected]);
+
   // 칩을 누를 때마다 동기로 다시 계산한다 (DB 조회 없음, §5-5)
   const earned = useMemo(
     () => (tags ? previewPoints(selected, tags, ctx) : 0),
@@ -125,9 +152,91 @@ export default function ReviewSheet({
     }
   }
 
+  // 서술형·가격대 — 줄바꿈되는 칩 묶음
+  function renderChipGroup(group: TagGroup, Heading: 'h2' | 'h3') {
+    const groupTagIds = group.tags.map((t) => t.id);
+    const inGroup = selected.filter((id) => groupTagIds.includes(id));
+    const full = inGroup.length >= group.maxSelect;
+    return (
+      <section key={group.groupKey} className="flex flex-col gap-3">
+        <Heading className="text-sm font-bold">
+          {group.groupLabel}
+          <span className={`ml-2 font-normal ${SUB_TEXT}`}>
+            {group.maxSelect === 1 ? '1개' : `최대 ${group.maxSelect}개`}
+          </span>
+        </Heading>
+        <div className="flex flex-wrap gap-2">
+          {group.tags.map((tag) => {
+            const on = selected.includes(tag.id);
+            // maxSelect가 1인 그룹은 바꿔 고를 수 있으므로 막지 않는다
+            const blocked = !on && full && group.maxSelect > 1;
+            return (
+              <button
+                key={tag.id}
+                type="button"
+                aria-pressed={on}
+                disabled={blocked || busy}
+                className={`min-h-11 rounded-full border px-4 py-2.5 text-sm ${
+                  on ? ON_CLASS : OFF_CLASS
+                } ${blocked ? 'opacity-30' : ''}`}
+                onClick={() => toggle(tag, groupTagIds, group.maxSelect)}
+              >
+                {tag.label}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+    );
+  }
+
+  // 평가형 — 왼쪽 그룹 이름, 오른쪽 칩 이름 그대로 한 줄 칸. 하나만, 다시 누르면 해제(toggle 규칙 그대로)
+  function renderRatingRow(group: TagGroup) {
+    const groupTagIds = group.tags.map((t) => t.id);
+    const labelId = `${morePanelId}-${group.groupKey}`;
+    return (
+      <div key={group.groupKey} className="flex items-center gap-3">
+        <h3 id={labelId} className="w-12 shrink-0 text-sm font-bold">
+          {group.groupLabel}
+        </h3>
+        <div
+          role="group"
+          aria-labelledby={labelId}
+          className="grid flex-1 overflow-hidden rounded-lg border border-[#998878]"
+          style={{ gridTemplateColumns: `repeat(${group.tags.length}, minmax(0, 1fr))` }}
+        >
+          {group.tags.map((tag, i) => {
+            const on = selected.includes(tag.id);
+            return (
+              <button
+                key={tag.id}
+                type="button"
+                aria-pressed={on}
+                disabled={busy}
+                className={`min-h-11 break-keep px-1 py-1.5 text-[13px] leading-tight ${
+                  i > 0 ? 'border-l border-l-[#998878]' : ''
+                } ${
+                  on
+                    ? 'bg-[#003876] font-medium text-white'
+                    : 'bg-white text-[#2A211B]'
+                }`}
+                onClick={() => toggle(tag, groupTagIds, group.maxSelect)}
+              >
+                {tag.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  const moreChipGroups = moreGroups.filter((g) => g.groupKind !== 'evaluative');
+  const moreRatingGroups = moreGroups.filter((g) => g.groupKind === 'evaluative');
+
   const body = (
     <div
-      className="flex flex-col gap-7 text-[#2A211B] dark:text-[#F2ECE6]"
+      className="flex flex-col gap-7 text-[#2A211B]"
       style={{ fontFamily: SYSTEM_FONT }}
     >
       {/* iOS 햅틱용 — 화면·접근성 트리·포커스 순서에서 모두 뺀다 */}
@@ -148,7 +257,7 @@ export default function ReviewSheet({
       />
       {/* 개수 글자와 포인트 배지를 나눠 보여준다 */}
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-[#8C6A4F] dark:text-[#C9AE95]">
+        <p className="text-sm text-[#7A5B43]">
           입력한 정보 <span className={`${display.className} text-base`}>{selected.length}</span>개
         </p>
         <span
@@ -160,49 +269,67 @@ export default function ReviewSheet({
 
       {loadError && <p className="text-sm text-[#D2301E]">{loadError}</p>}
       {!tags && !loadError && (
-        <p className="text-sm text-[#8C6A4F] dark:text-[#C9AE95]">불러오는 중…</p>
+        <p className="text-sm text-[#7A5B43]">불러오는 중…</p>
       )}
 
-      {groups.map((group) => {
-        const groupTagIds = group.tags.map((t) => t.id);
-        const inGroup = selected.filter((id) => groupTagIds.includes(id));
-        const full = inGroup.length >= group.maxSelect;
-        return (
-          <section key={group.groupKey} className="flex flex-col gap-3">
-            <h2 className="text-sm font-bold">
-              {group.groupLabel}
-              <span className="ml-2 font-normal text-[#8C6A4F] dark:text-[#C9AE95]">
-                {group.groupKind === 'evaluative' || group.maxSelect === 1
-                  ? '1개'
-                  : `최대 ${group.maxSelect}개`}
+      {mainGroups.map((group) => renderChipGroup(group, 'h2'))}
+
+      {/* 분위기·가격대·평가형은 접어둔다. 칩은 모두 그대로 고를 수 있다 */}
+      {moreGroups.length > 0 && (
+        <section className="rounded-xl bg-[#F3EFE8]">
+          <h2>
+            <button
+              type="button"
+              aria-expanded={moreOpen}
+              aria-controls={morePanelId}
+              className="flex min-h-[52px] w-full items-center gap-3 px-4 py-3 text-left"
+              onClick={() => setMoreOpen((open) => !open)}
+            >
+              <span className="flex flex-1 flex-col gap-0.5">
+                <span className="text-sm font-bold">더 알려주기</span>
+                <span className={`text-xs ${SUB_TEXT}`}>
+                  분위기 · 가격대 · 평가
+                  {/* 이 가게 첫 리뷰일 때만 — 풍부(g ≥ 5) +1P 안내 (§5-5) */}
+                  {ctx.isFirst && (
+                    <span className="ml-1.5 font-medium">· 5개 그룹을 채우면 +1P</span>
+                  )}
+                </span>
               </span>
-            </h2>
-            <div className="flex flex-wrap gap-2">
-              {group.tags.map((tag) => {
-                const on = selected.includes(tag.id);
-                // maxSelect가 1인 그룹은 바꿔 고를 수 있으므로 막지 않는다
-                const blocked = !on && full && group.maxSelect > 1;
-                return (
-                  <button
-                    key={tag.id}
-                    type="button"
-                    aria-pressed={on}
-                    disabled={blocked || busy}
-                    className={`min-h-11 rounded-full border px-4 py-2.5 text-sm ${
-                      on
-                        ? 'border-[#E8432E] bg-[#E8432E] font-medium text-white'
-                        : 'border-[#E7E3DE] dark:border-white/20'
-                    } ${blocked ? 'opacity-30' : ''}`}
-                    onClick={() => toggle(tag, groupTagIds, group.maxSelect)}
-                  >
-                    {tag.label}
-                  </button>
-                );
-              })}
+              {moreCount > 0 && (
+                <span className="shrink-0 text-sm font-medium text-[#003876]">
+                  {moreCount}개 선택
+                </span>
+              )}
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 20 20"
+                className={`h-5 w-5 shrink-0 ${SUB_TEXT} transition-transform motion-reduce:transition-none ${
+                  moreOpen ? 'rotate-180' : ''
+                }`}
+              >
+                <path
+                  d="M5 7.5l5 5 5-5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          </h2>
+          <div id={morePanelId} hidden={!moreOpen} className="px-4 pb-5 pt-1">
+            <div className="flex flex-col gap-7">
+              {moreChipGroups.map((group) => renderChipGroup(group, 'h3'))}
+              {moreRatingGroups.length > 0 && (
+                <div className="flex flex-col gap-3">
+                  {moreRatingGroups.map((group) => renderRatingRow(group))}
+                </div>
+              )}
             </div>
-          </section>
-        );
-      })}
+          </div>
+        </section>
+      )}
 
       {error && <p className="text-sm text-[#D2301E]">{error}</p>}
 
@@ -210,7 +337,7 @@ export default function ReviewSheet({
       <div className="flex flex-col gap-2 pt-1">
         <button
           type="button"
-          className="min-h-[52px] w-full rounded-lg bg-[#E8432E] px-4 font-medium text-white disabled:opacity-40"
+          className="min-h-[52px] w-full rounded-lg bg-[#D63A26] px-4 font-medium text-white disabled:opacity-40"
           disabled={selected.length === 0 || busy}
           onClick={submit}
         >
@@ -218,7 +345,7 @@ export default function ReviewSheet({
         </button>
         <button
           type="button"
-          className="min-h-[52px] w-full rounded-lg px-4 font-medium text-[#8C6A4F] dark:text-[#C9AE95]"
+          className="min-h-[52px] w-full rounded-lg px-4 font-medium text-[#7A5B43]"
           disabled={busy}
           onClick={() => onDone(0)}
         >
@@ -237,16 +364,16 @@ export default function ReviewSheet({
         role="dialog"
         aria-modal="true"
         aria-label="어땠어?"
-        className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-[var(--background)] px-4 pb-6 pt-4"
+        className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-white px-4 pb-6 pt-4"
       >
         <div className="mb-4 flex items-center justify-between">
-          <h1 className={`${display.className} text-2xl text-[#2A211B] dark:text-[#F2ECE6]`}>
+          <h1 className={`${display.className} text-2xl text-[#2A211B]`}>
             어땠어?
           </h1>
           <button
             type="button"
             aria-label="닫기"
-            className="min-h-11 px-2 text-xl text-[#8C6A4F] dark:text-[#C9AE95]"
+            className="min-h-11 px-2 text-xl text-[#7A5B43]"
             disabled={busy}
             onClick={() => onDone(0)}
           >
