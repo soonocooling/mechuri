@@ -7,7 +7,7 @@ import { getTags } from './tags';
 import { getCurrentReviews } from './reviews';
 import { getPointBalance } from './points';
 import { hasPremium } from './premium';
-import { computeScores } from './ranking';
+import { computeScores, rankPlaces } from './ranking';
 import { computeTagStats } from './tagStats';
 
 /** 세 항(CF·CB·POP)이 모두 0이라 기여 최대 항을 정할 수 없을 때의 사유 */
@@ -191,14 +191,9 @@ function compareTie(a: number, b: number, scores: Scores, places: Map<number, Pl
   return (places.get(a)?.name ?? '').localeCompare(places.get(b)?.name ?? '', 'ko');
 }
 
-/** 순위 탭과 같은 기준(n_p ≥ 2만, S̃ ↓, §5-2 동점 규칙)의 순위. key = placeId */
+/** 순위 탭과 같은 전체 순위(n_p ≥ 1 모든 가게, S̃ ↓, S̃가 같으면 공동 순위). key = placeId */
 function rankPositions(scores: Scores, places: Map<number, Place>): Map<number, number> {
-  const ids = [...scores].filter(([, s]) => s.n >= 2).map(([id]) => id);
-  ids.sort((a, b) => {
-    const d = scores.get(b)!.score - scores.get(a)!.score;
-    return Math.abs(d) > EPS ? d : compareTie(a, b, scores, places);
-  });
-  return new Map(ids.map((id, i) => [id, i + 1]));
+  return new Map(rankPlaces(scores, places).map((r) => [r.place.id, r.rank]));
 }
 
 /**
@@ -329,8 +324,9 @@ async function computeRecommendations(
       return `${label} 취향과 맞음`;
     }
 
+    // POP > 0이면 누군가 리스트에 넣은 가게라 항상 순위가 있다
     const position = positions.get(p);
-    return position ? `국캠 전체 ${position}위` : '신규 발견';
+    return position ? `국캠 전체 ${position}위` : FALLBACK_REASON;
   };
 
   return scored.slice(0, count).map((s) => ({ placeId: s.p, reason: reasonFor(s) }));

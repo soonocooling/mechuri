@@ -5,7 +5,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { CurrentReview, Place, ReviewSource, Tag } from '@/lib/types';
-import type { RankedPlace } from '@/lib/ranking';
+import { SCORE_EPS, type RankedPlace } from '@/lib/ranking';
 import { breakdownForPlace } from '@/lib/tagStats';
 import { useUser } from '@/lib/auth';
 import { getCurrentList, saveList } from '@/lib/lists';
@@ -14,8 +14,8 @@ import ReviewSheet from '@/components/ReviewSheet';
 /** 순위 탭이 한 번 불러와 계산해 둔 것 */
 export type RankingView = {
   places: Map<number, Place>;
+  /** 전체 순위 (n ≥ 1 모든 가게) */
   ranked: RankedPlace[];
-  newcomers: RankedPlace[];
   stats: Map<number, { assignedTagIds: number[]; positive: string[] }>;
   reviews: CurrentReview[];
   tags: Tag[];
@@ -44,9 +44,8 @@ export default function PlaceDetail({ placeId, view, onClose, onChanged }: Place
   const place = view.places.get(placeId);
   if (!place) return null;
 
-  const row =
-    view.ranked.find((r) => r.place.id === placeId) ??
-    view.newcomers.find((r) => r.place.id === placeId);
+  // 리뷰만 있고 아무도 리스트에 넣지 않은 가게는 순위가 없다
+  const row = view.ranked.find((r) => r.place.id === placeId);
   const placeReviews = view.reviews.filter((r) => r.placeId === placeId);
   const groups = breakdownForPlace(placeId, placeReviews, view.tags);
   const assigned = view.stats.get(placeId)?.assignedTagIds ?? [];
@@ -55,9 +54,12 @@ export default function PlaceDetail({ placeId, view, onClose, onChanged }: Place
   const evaluative = groups.filter((g) => g.groupKind === 'evaluative' && g.n > 0);
   const isTestPlace = place.kakaoPlaceId.startsWith('test-');
 
-  // 카테고리 안 순위 (n ≥ 2만)
-  const inCategory = view.ranked.filter((r) => r.place.category === place.category);
-  const categoryRank = row?.rank ? inCategory.findIndex((r) => r.place.id === placeId) + 1 : null;
+  // 카테고리 안 순위 — 전체 순위와 같은 공동 순위 규칙 (S̃가 확실히 높은 가게 수 + 1)
+  const categoryRank = row
+    ? view.ranked.filter(
+        (r) => r.place.category === place.category && r.score - row.score > SCORE_EPS
+      ).length + 1
+    : null;
 
   function requireLogin(): string | null {
     if (user) return user.id;
@@ -141,7 +143,7 @@ export default function PlaceDetail({ placeId, view, onClose, onChanged }: Place
                 <h2 className="truncate text-xl font-semibold">{place.name}</h2>
                 <p className="text-sm text-gray-500">
                   {place.category}
-                  {row?.rank ? ` · 전체 ${row.rank}위` : ' · 신규 발견'}
+                  {row ? ` · 전체 ${row.rank}위` : ''}
                   {categoryRank ? ` · ${place.category} ${categoryRank}위` : ''}
                 </p>
               </div>

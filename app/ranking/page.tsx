@@ -9,7 +9,7 @@ import { getAllCurrentLists } from '@/lib/lists';
 import { getPlaces } from '@/lib/places';
 import { getTags } from '@/lib/tags';
 import { getCurrentReviews } from '@/lib/reviews';
-import { computeScores, matchesFilter, rankPlaces, type RankedPlace } from '@/lib/ranking';
+import { computeScores, matchesFilter, rankPlaces, rankTier, type RankedPlace } from '@/lib/ranking';
 import { computeTagStats } from '@/lib/tagStats';
 import FilterSheet, { dropMismatchedCuisine } from '@/components/FilterSheet';
 import PlaceDetail, { type RankingView } from '@/components/PlaceDetail';
@@ -20,7 +20,6 @@ const CATEGORIES: (Category | '전체')[] = [
   '버거·피자', '샐러드·건강식', '카페·디저트', '술집', '기타',
 ];
 const CARD_TAGS = 3;
-const MAP_PINS = 30;
 
 type Loaded = RankingView & { listOwners: Set<string> };
 
@@ -31,9 +30,9 @@ async function load(): Promise<Loaded> {
     getTags(),
     getCurrentReviews(),
   ]);
-  const { ranked, newcomers } = rankPlaces(computeScores(lists), places);
+  const ranked = rankPlaces(computeScores(lists), places);
   const stats = computeTagStats(reviews, tags);
-  return { places, ranked, newcomers, stats, reviews, tags, listOwners: new Set(lists.keys()) };
+  return { places, ranked, stats, reviews, tags, listOwners: new Set(lists.keys()) };
 }
 
 export default function RankingPage() {
@@ -66,19 +65,21 @@ export default function RankingPage() {
     [data, category, selectedTagIds]
   );
   const shown = useMemo(() => (data ? data.ranked.filter(pass) : []), [data, pass]);
-  const shownNew = useMemo(() => (data ? data.newcomers.filter(pass) : []), [data, pass]);
   const filtered = category !== '전체' || selectedTagIds.length > 0;
 
+  // 핀: 필터를 통과한 가게 전부. 숫자·색은 필터와 상관없이 전체 순위 기준
+  const total = data?.ranked.length ?? 0;
   const mapItems: MapItem[] = useMemo(
     () =>
-      shown.slice(0, MAP_PINS).map((r, i) => ({
+      shown.map((r) => ({
         placeId: r.place.id,
         name: r.place.name,
         lat: r.place.lat,
         lng: r.place.lng,
-        label: String(i + 1),
+        label: String(r.rank),
+        tier: rankTier(r.rank, total),
       })),
-    [shown]
+    [shown, total]
   );
   const openDetail = useCallback((id: number) => setOpenId(id), []);
 
@@ -163,11 +164,11 @@ export default function RankingPage() {
         <>
           {shown.length === 0 ? (
             <p className="py-6 text-center text-sm text-gray-500">
-              {filtered ? '이 조건에 순위가 매겨진 가게가 아직 없어요.' : '아직 순위가 없어요. 내 맛집을 입력해 주세요!'}
+              {filtered ? '이 조건에 맞는 가게가 아직 없어요.' : '아직 순위가 없어요. 내 맛집을 입력해 주세요!'}
             </p>
           ) : (
             <ol className="flex flex-col gap-2">
-              {shown.map((r, i) => {
+              {shown.map((r) => {
                 const tagIds = data.stats.get(r.place.id)?.assignedTagIds ?? [];
                 return (
                   <li key={r.place.id}>
@@ -176,12 +177,13 @@ export default function RankingPage() {
                       className="flex w-full items-start gap-3 rounded-lg border border-gray-200 px-3 py-2 text-left"
                       onClick={() => setOpenId(r.place.id)}
                     >
-                      <span className="w-6 pt-0.5 text-lg font-bold">{i + 1}</span>
+                      {/* 전체 순위 (공동 순위면 같은 숫자) */}
+                      <span className="min-w-6 shrink-0 pt-0.5 text-lg font-bold">{r.rank}</span>
                       <div className="min-w-0 flex-1">
                         <div className="truncate font-medium">{r.place.name}</div>
                         <div className="text-xs text-gray-500">
                           {r.place.category} · {r.n}명
-                          {filtered && ` · 전체 ${r.rank}위`}
+                          {r.nFirst > 0 && ` · 1위 ${r.nFirst}표`}
                         </div>
                         {tagIds.length > 0 && (
                           <div className="mt-1 truncate text-xs text-gray-600">
@@ -194,26 +196,6 @@ export default function RankingPage() {
                 );
               })}
             </ol>
-          )}
-
-          {shownNew.length > 0 && (
-            <section className="mt-2">
-              <h2 className="mb-2 text-sm font-medium text-gray-600">신규 발견 · 1명만 꼽은 곳</h2>
-              <ul className="flex flex-col gap-1">
-                {shownNew.map((r) => (
-                  <li key={r.place.id}>
-                    <button
-                      type="button"
-                      className="flex w-full items-baseline gap-2 rounded-lg px-3 py-1.5 text-left hover:bg-gray-50"
-                      onClick={() => setOpenId(r.place.id)}
-                    >
-                      <span className="truncate">{r.place.name}</span>
-                      <span className="shrink-0 text-xs text-gray-500">{r.place.category}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </section>
           )}
         </>
       )}
