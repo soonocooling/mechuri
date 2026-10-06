@@ -5,11 +5,33 @@ import { getAllCurrentLists } from './lists';
 import { getPlaces } from './places';
 import { getTags } from './tags';
 import { getCurrentReviews } from './reviews';
+import { getPointBalance } from './points';
+import { hasPremium } from './premium';
 import { computeScores } from './ranking';
 import { computeTagStats } from './tagStats';
 
 /** 세 항(CF·CB·POP)이 모두 0이라 기여 최대 항을 정할 수 없을 때의 사유 */
 export const FALLBACK_REASON = '아직 정보가 적어 골라본 새로운 곳';
+
+/** 포인트 추천 1회 비용 (§5-5) */
+const POINT_COST = 3;
+
+/** recommend()가 던지는 사용자용 에러 문구 */
+export const NOT_ENOUGH_POINTS_MESSAGE = `포인트가 부족해요. 추천 한 번에 ${POINT_COST}P가 필요해요.`;
+export const PREMIUM_REQUIRED_MESSAGE = '프리미엄 회원만 이용할 수 있어요.';
+export const LOAD_FAILED_MESSAGE = '추천을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.';
+
+const USER_MESSAGES = new Set([
+  NOT_ENOUGH_POINTS_MESSAGE,
+  PREMIUM_REQUIRED_MESSAGE,
+  LOAD_FAILED_MESSAGE,
+]);
+
+/** 원문은 콘솔에만 남기고, 화면에는 사용자용 문구를 던진다 */
+function loadFailed(cause: unknown): Error {
+  console.error('[recommend]', cause);
+  return new Error(LOAD_FAILED_MESSAGE);
+}
 
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const EPS = 1e-9;
@@ -95,8 +117,21 @@ export async function getThisWeekFree(userId: string): Promise<RecItem[] | null>
     .order('id', { ascending: false })
     .limit(1)
     .returns<{ result_json: string }[]>();
-  if (error) throw new Error(error.message);
+  if (error) throw loadFailed(error);
   return data.length ? parseResult(data[0].result_json) : null;
+}
+
+/** 이번 주(월 00:00 KST~) 내가 kinds 추천으로 받은 가게 id */
+async function getThisWeekPlaceIds(userId: string, kinds: RecKind[]): Promise<number[]> {
+  const { data, error } = await supabase
+    .from('recommendations')
+    .select('result_json')
+    .eq('user_id', userId)
+    .in('kind', kinds)
+    .gte('created_at', weekStartKst(new Date()).toISOString())
+    .returns<{ result_json: string }[]>();
+  if (error) throw loadFailed(error);
+  return data.flatMap((row) => parseResult(row.result_json).map((i) => i.placeId));
 }
 
 async function saveResult(userId: string, kind: RecKind, items: RecItem[]): Promise<void> {
@@ -104,7 +139,7 @@ async function saveResult(userId: string, kind: RecKind, items: RecItem[]): Prom
   const { error } = await supabase
     .from('recommendations')
     .insert({ user_id: userId, kind, result_json: resultJson });
-  if (error) throw new Error(error.message);
+  if (error) throw loadFailed(error);
 }
 
 // ---------------------------------------------------------------------------
@@ -303,6 +338,20 @@ export async function recommend(
   kind: RecKind,
   excludeIds?: number[]
 ): Promise<RecItem[]> {
+  try {
+    return await runRecommend(userId, kind, excludeIds);
+  } catch (e) {
+    // 다른 lib(lists·places·tags·reviews 등)의 조회 실패 원문도 여기서 사용자용 문구로 바꾼다
+    if (e instanceof Error && USER_MESSAGES.has(e.message)) throw e;
+    throw loadFailed(e);
+  }
+}
+
+async function runRecommend(
+  userId: string,
+  kind: RecKind,
+  excludeIds?: number[]
+): Promise<RecItem[]> {
   if (kind === 'free') {
     const saved = await getThisWeekFree(userId);
     if (saved) return saved;
@@ -311,10 +360,17 @@ export async function recommend(
     return items;
   }
 
-  // TODO(B4) point: getPointBalance(userId) ≥ 3 확인 → computeRecommendations(userId, 1)
-  //   → 1곳 이상이면 saveResult(userId, 'point', items). 요청 중 버튼 비활성은 화면에서
-  // TODO(B5) premium: hasPremium(userId) 확인 → computeRecommendations(userId, 5, excludeIds)
-  //   → 1곳 이상이면 saveResult(userId, 'premium', items)
-  void excludeIds;
-  throw new Error('아직 준비 중인 추천이에요.');
+  if (kind === 'point') {
+    if ((await getPointBalance(userId)) < POINT_COST) throw new Error(NOT_ENOUGH_POINTS_MESSAGE);
+    // free와 같은 가게가 또 나오지 않도록 이번 주에 받은 free·point 가게를 뺀다
+    const received = await getThisWeekPlaceIds(userId, ['free', 'point']);
+    const items = await computeRecommendations(userId, 1, received);
+    if (items.length > 0) await saveResult(userId, 'point', items);
+    return items;
+  }
+
+  if (!(await hasPremium(userId))) throw new Error(PREMIUM_REQUIRED_MESSAGE);
+  const items = await computeRecommendations(userId, 5, excludeIds);
+  if (items.length > 0) await saveResult(userId, 'premium', items);
+  return items;
 }
