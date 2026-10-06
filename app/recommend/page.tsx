@@ -1,10 +1,18 @@
 'use client';
 // 담당 B — plan.md §10 추천 탭 (화면 3), §5-5, §5-6, §5-7, §7
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Do_Hyeon } from 'next/font/google';
-import type { Category, Place, RecItem, RecKind } from '@/lib/types';
+import type { Category, Place, RecItem, RecKind, Tag } from '@/lib/types';
 import EggHatch, {
   EMPTY_EGG_MESSAGE,
   HATCH_PAGE_Z,
@@ -13,17 +21,20 @@ import EggHatch, {
   mealNow,
   type Meal,
 } from '@/components/EggHatch';
+import MoodPicker from '@/components/MoodPicker';
 import RecommendMap from '@/components/RecommendMap';
 import { useUser } from '@/lib/auth';
 import { getAllCurrentLists, getCurrentList } from '@/lib/lists';
 import { getPlaces } from '@/lib/places';
 import { getPointBalance } from '@/lib/points';
 import { hasPremium } from '@/lib/premium';
+import { getTags } from '@/lib/tags';
 import {
   LOAD_FAILED_MESSAGE,
   getTodayFree,
   msUntilNextFree,
   recommend,
+  type RecContext,
 } from '@/lib/recommend';
 
 /** §7 Top 3 미입력자는 추천 탭 잠금 */
@@ -39,6 +50,7 @@ type Shown = { placeId: number; name: string; category: Category | null; reason:
  * pointResult·premiumResult = null이면 아직 요청 안 함.
  * premiumExclude = 직전 프리미엄 5곳의 placeId. 페이지 상태라 새로고침하면 초기화 (§5-6)
  * myPlaceIds = 내 현재 리스트 가게 (지도의 회색 점)
+ * tags = 지금 상태 질문(MoodPicker)의 선택지를 만들 태그. 못 불러오면 빈 배열(대분류만 보임)
  */
 type Loaded = {
   userId: string;
@@ -50,6 +62,7 @@ type Loaded = {
   pointResult: Shown[] | null;
   premiumResult: Shown[] | null;
   premiumExclude: number[];
+  tags: Tag[];
 };
 
 // plan.md §13 디자인 규칙 — 제목·가게 이름·숫자는 Do Hyeon, 본문은 시스템 글꼴
@@ -98,11 +111,17 @@ function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/** recommend()가 던지는 문구는 그대로 쓰고(§5-6), 가게 이름 조회 실패는 같은 사용자용 문구로 바꾼다 */
-async function fetchShown(userId: string, kind: RecKind, excludeIds?: number[]): Promise<Shown[]> {
-  const items = await recommend(userId, kind, excludeIds);
+/** recommend()가 던지는 문구는 그대로 쓰고(§5-6), 가게 이름 조회 실패는 같은 사용자용 문구로 바꾼다.
+ *  notice = 대분류 제한을 풀었을 때 안내 (§5-6 지금 상태 조건) */
+async function fetchShown(
+  userId: string,
+  kind: RecKind,
+  excludeIds?: number[],
+  context?: RecContext
+): Promise<{ shown: Shown[]; notice: string | null }> {
+  const items = await recommend(userId, kind, excludeIds, context);
   try {
-    return await toShown(items);
+    return { shown: await toShown(items), notice: items.notice ?? null };
   } catch (e) {
     console.error('[recommend page]', e);
     throw new Error(LOAD_FAILED_MESSAGE);
@@ -175,18 +194,26 @@ function EmptyNote() {
   return <p className={`text-sm ${MUTED}`}>{EMPTY_EGG_MESSAGE}</p>;
 }
 
+/** 조건에 딱 맞는 곳이 없어 대분류 제한을 풀었을 때 결과 위 안내 */
+function Notice({ text }: { text: string | null | undefined }) {
+  return text ? <p className={`text-sm ${MUTED}`}>{text}</p> : null;
+}
+
 /** 오늘의 무료 추천을 아직 안 받았을 때 맨 위 영역: 메추리 + 시간대 문구 + 추천 받기 */
 function StartScreen({
   meal,
   empty,
   busy,
   loading,
+  picker,
   onStart,
 }: {
   meal: Meal;
   empty: boolean;
   busy: boolean;
   loading: boolean;
+  /** 지금 상태 질문 — 추천 받기 버튼 바로 위 */
+  picker: ReactNode;
   onStart: () => void;
 }) {
   return (
@@ -205,6 +232,7 @@ function StartScreen({
       <p className={`text-sm ${MUTED}`}>하루 한 번, 내 취향에 맞는 곳을 무료로 골라 드려요.</p>
       {/* recommend()가 0곳을 돌려준 경우. 저장되지 않았으니 다시 시도할 수 있다 (§5-6) */}
       {empty && <EmptyNote />}
+      <div className="w-full">{picker}</div>
       <button type="button" className={PRIMARY} disabled={busy} onClick={onStart}>
         {loading ? layingMessage(meal) : `오늘의 ${meal} 메뉴 추천 받기`}
       </button>
@@ -280,6 +308,10 @@ export default function RecommendPage() {
   // 요청 중인 추천 종류. 하나라도 요청 중이면 추천 버튼을 모두 막는다 (§5-6 연타 방지)
   const [pending, setPending] = useState<RecKind | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 지금 상태 조건. 시작 화면과 "다음 추천 조건"이 같은 상태를 쓴다 (새로고침하면 초기화)
+  const [mood, setMood] = useState<RecContext>({});
+  // 대분류 제한을 풀었을 때 결과별 안내 (§5-6 지금 상태 조건)
+  const [notices, setNotices] = useState<Partial<Record<RecKind, string | null>>>({});
   // 알 깨기 연출. 응답이 온 뒤에도 연출이 끝날 때까지 버튼을 막는다
   const [hatch, setHatch] = useState<Hatch | null>(null);
   // 5단계: 알의 금(화면 좌표)에서 페이지가 벌어진다
@@ -370,8 +402,13 @@ export default function RecommendPage() {
       getTodayFree(userId),
       getPointBalance(userId),
       hasPremium(userId),
+      // 태그를 못 불러와도 추천 탭은 열고, 지금 상태 질문은 대분류만 보인다
+      getTags().catch((e: unknown) => {
+        console.error('[recommend page] tags', e);
+        return [];
+      }),
     ])
-      .then(async ([list, week, balance, premium]) => {
+      .then(async ([list, week, balance, premium, tags]) => {
         const result = week ? await toShown(week) : null;
         if (active) {
           setLoaded({
@@ -384,6 +421,7 @@ export default function RecommendPage() {
             pointResult: null,
             premiumResult: null,
             premiumExclude: [],
+            tags,
           });
         }
       })
@@ -432,8 +470,9 @@ export default function RecommendPage() {
     setPending('free');
     startHatch('free');
     try {
-      const result = await fetchShown(uid, 'free');
+      const { shown: result, notice } = await fetchShown(uid, 'free', undefined, mood);
       patch(uid, { result });
+      setNotices((n) => ({ ...n, free: notice }));
       settleHatch('free', result.length);
     } catch (e) {
       stopHatch();
@@ -450,8 +489,9 @@ export default function RecommendPage() {
     setPending('point');
     startHatch('point');
     try {
-      const pointResult = await fetchShown(uid, 'point');
+      const { shown: pointResult, notice } = await fetchShown(uid, 'point', undefined, mood);
       patch(uid, { pointResult });
+      setNotices((n) => ({ ...n, point: notice }));
       settleHatch('point', pointResult.length);
     } catch (e) {
       stopHatch();
@@ -474,7 +514,13 @@ export default function RecommendPage() {
     setPending('premium');
     startHatch('premium');
     try {
-      const premiumResult = await fetchShown(uid, 'premium', loaded.premiumExclude);
+      const { shown: premiumResult, notice } = await fetchShown(
+        uid,
+        'premium',
+        loaded.premiumExclude,
+        mood
+      );
+      setNotices((n) => ({ ...n, premium: notice }));
       // 0곳이면 직전 5곳을 그대로 들고 있어 다시 눌러도 같은 가게가 나오지 않게 한다
       patch(
         uid,
@@ -543,7 +589,7 @@ export default function RecommendPage() {
     );
   }
 
-  const { balance, premium, myPlaceIds } = loaded;
+  const { balance, premium, myPlaceIds, tags } = loaded;
   const meal = mealNow();
   const hatchView = hatch && (
     <EggHatch
@@ -553,6 +599,11 @@ export default function RecommendPage() {
       onOpen={(slit, ms) => setReveal({ ...slit, ms })}
       onFinish={finishHatch}
     />
+  );
+
+  // 지금 상태 질문 — 시작 화면에선 추천 받기 버튼 위, 무료 추천 뒤엔 3P·프리미엄 위 (§1 화면 3)
+  const picker = (
+    <MoodPicker value={mood} onChange={setMood} tags={tags} premium={premium} disabled={busy} />
   );
 
   // 추천 결과(free·point·premium)가 1곳 이상이면 지도
@@ -570,6 +621,7 @@ export default function RecommendPage() {
             empty={result !== null}
             busy={busy}
             loading={pending === 'free'}
+            picker={picker}
             onStart={getFree}
           />,
           mapView,
@@ -579,6 +631,7 @@ export default function RecommendPage() {
           <section key="free" className="flex flex-col gap-3">
             <h1 className={`${display.className} text-3xl`}>오늘의 메뉴 추천</h1>
             <p className={`text-sm ${MUTED}`}>오늘 {meal}으로 어때요?</p>
+            <Notice text={notices.free} />
             <FreeCard items={result} nextDay={msUntilNextFree() <= DAWN_MS ? '오늘' : '내일'} />
           </section>,
         ];
@@ -588,6 +641,14 @@ export default function RecommendPage() {
     <div className="flex flex-col gap-6">
       {top}
 
+      {/* 오늘 무료 추천을 받은 뒤: 다음(3P·프리미엄) 추천에 쓸 조건 */}
+      {result !== null && result.length > 0 && (
+        <section className={`flex flex-col gap-3 border-t pt-5 ${LINE}`}>
+          <h2 className={`${display.className} text-xl`}>다음 추천 조건</h2>
+          {picker}
+        </section>
+      )}
+
       {/* §5-5 포인트 추천: 잔액 ≥ 3일 때만, 요청 중 비활성 */}
       <section className={`flex flex-col gap-3 border-t pt-5 ${LINE}`}>
         <div className="flex items-center justify-between gap-3">
@@ -595,7 +656,14 @@ export default function RecommendPage() {
           <PointBadge balance={balance} />
         </div>
         {pointResult !== null &&
-          (pointResult.length > 0 ? <PlaceList items={pointResult} /> : <EmptyNote />)}
+          (pointResult.length > 0 ? (
+            <>
+              <Notice text={notices.point} />
+              <PlaceList items={pointResult} />
+            </>
+          ) : (
+            <EmptyNote />
+          ))}
         <button
           type="button"
           className={SECONDARY}
@@ -612,7 +680,14 @@ export default function RecommendPage() {
         {premium ? (
           <>
             {premiumResult !== null &&
-              (premiumResult.length > 0 ? <PlaceList items={premiumResult} /> : <EmptyNote />)}
+              (premiumResult.length > 0 ? (
+                <>
+                  <Notice text={notices.premium} />
+                  <PlaceList items={premiumResult} />
+                </>
+              ) : (
+                <EmptyNote />
+              ))}
             <button type="button" className={SECONDARY} disabled={busy} onClick={getPremium}>
               {pending === 'premium'
                 ? layingMessage(meal)
