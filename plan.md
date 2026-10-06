@@ -273,6 +273,8 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 - `getReviewContext`는 로그인 세션 사용자 기준(`supabase.auth.getUser`)으로 계산한다
 - 시트를 열어둔 사이 다른 사용자 리뷰로 미리보기와 실제 적립이 달라지는 경우는 무시한다
 - 온보딩 완료 화면 P = 세 ReviewSheet의 earned 합 + (세 곳 모두 earned > 0이면 3). 신규 사용자에겐 earned > 0 ⇔ 기본 충족 첫 리뷰이므로 §5-5 보너스 조건과 같다
+- `getPointBalance`는 userId = 로그인 세션 사용자일 때만 계산하고, 아니면 0 (recommendations는 본인만 읽혀서 남의 차감이 0으로 잡히는 것 방지)
+- 온보딩 완주 보너스 계산 시 `lib/points.ts`가 ranking_lists·ranking_items를 직접 읽는다(읽기만)
 
 ### 5-6. 추천 (`lib/recommend.ts`)
 - 후보: 현재 리스트나 현재 리뷰에 한 번이라도 등장한 가게 − 내 현재 리스트 − (프리미엄 "다시 추천" 시) 직전 결과
@@ -301,6 +303,9 @@ places·recommendations·subscriptions는 한 줄짜리라 직접 insert.
 - free 추천은 화면 진입 시 자동 실행하지 않고 버튼을 눌렀을 때 실행한다 (개발 모드에서 effect가 두 번 실행돼 중복 저장되는 것 방지)
 - 포인트 추천 버튼은 요청 중 비활성 (연타로 잔액이 음수가 되는 것 방지)
 - 프리미엄 "다시 추천"의 excludeIds는 페이지 상태로 보관한다(새로고침하면 초기화)
+- point 추천은 이번 주(월 00:00 KST~)에 내가 받은 free·point 추천 가게를 후보에서 제외 (3P를 내고 같은 가게를 받는 것 방지)
+- premium은 이번 주 기록을 빼지 않고 excludeIds만 제외
+- `recommend()`가 던지는 에러는 사용자용 한국어 문구(`lib/recommend.ts`에서 상수로 export). 화면은 받은 메시지를 그대로 표시한다
 
 ### 5-7. 프리미엄 (`lib/premium.ts`)
 - hasPremium(userId) = 본인 subscriptions 중 period_end > now() 가 하나라도 있음
