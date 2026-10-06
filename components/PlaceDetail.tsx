@@ -104,9 +104,10 @@ export default function PlaceDetail({ placeId, view, onClose, onChanged }: Place
     setReviewing(source);
   }
 
+  // ReviewSheet는 제출(0P 포함)과 건너뛰기 모두 onDone을 부른다 → 0이면 문구 없이 닫고 새로고침만
   function reviewDone(earned: number) {
     setReviewing(null);
-    setNotice(earned > 0 ? `리뷰 고마워요! +${earned}P` : '리뷰를 남겼어요.');
+    setNotice(earned > 0 ? `리뷰 고마워요! +${earned}P` : null);
     onChanged();
   }
 

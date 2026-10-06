@@ -85,7 +85,7 @@ export default function PremiumPage() {
           </tr>
           <tr className="border-t border-gray-100">
             <td className="py-2 text-left text-gray-600">추천 횟수</td>
-            <td>주 1회</td>
+            <td>하루 1회</td>
             <td className="font-semibold">무제한</td>
           </tr>
           <tr className="border-t border-gray-100">
