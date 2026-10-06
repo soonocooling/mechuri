@@ -105,14 +105,6 @@ export default function OnboardingPage() {
           embedded
           onDone={reviewDone}
         />
-        {/* TODO: B의 ReviewSheet에 건너뛰기가 생기면 지운다 (WORK_SPLIT §6 A4) */}
-        <button
-          type="button"
-          className="self-start text-sm text-gray-500 underline"
-          onClick={() => reviewDone(0)}
-        >
-          건너뛰기
-        </button>
       </div>
     );
   }
